@@ -6,13 +6,13 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{App, Camera, Camera3d, Color, Commands, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PointLight, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, With};
+use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, With};
 use bevy::render::camera::Viewport;
 use bevy::window::PrimaryWindow;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::event::EventWriter;
-use bevy_ecs::prelude::Without;
+use bevy_ecs::prelude::{ContainsEntity, Trigger, Without};
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
@@ -263,7 +263,7 @@ fn setup_scene_utils(
 ) {
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.05, 0.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::GREEN,
@@ -292,11 +292,13 @@ fn setup_drawings_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut lines_materials: ResMut<Assets<LineMaterial>>,
+    shared_materials: Res<SharedMaterials>
 ){
     let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    let mut dxf_lines: Vec<(Vec3, Vec3)>=vec![];
+    let mut dxf_lines_c: Vec<(Vec3, Vec3)>=vec![];
+    let mut dxf_lines_t: Vec<(Vec3, Vec3)>=vec![];
 
-    let stp: Vec<u8> = Vec::from((include_bytes!("files/2.stp")).as_slice());
+    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
     let (circles, tors)=cnc_to_poly(&lraclr_arr,&the_up_dir);
@@ -304,24 +306,67 @@ fn setup_drawings_layer(
     circles.iter().for_each(|c|{
         let v1=Vec3::new(c.ca.loc.x as f32,c.ca.loc.y as f32,c.ca.loc.z as f32);
         let v2=Vec3::new(c.cb.loc.x as f32,c.cb.loc.y as f32,c.cb.loc.z as f32);
-        dxf_lines.push((v1,v2));
+        dxf_lines_c.push((v1,v2));
+        let mesh=c.to_mesh(16);
+        let handle: Handle<Mesh> = meshes.add(mesh);
+        let entity: Entity =commands.spawn((
+            Mesh3d(handle),
+            MeshMaterial3d(shared_materials.white_matl.clone()),
+            //Disabled,
+        )).observe(on_mouse_button_click).id();
     });
 
     let mut counter=0;
     tors.iter().for_each(|t|{
         let prev_dir=circles[counter].get_dir();
         let lines=t.to_lines(&prev_dir);
-        dxf_lines.extend_from_slice(&lines);
+        dxf_lines_t.extend_from_slice(&lines);
+
+        let mesh=t.to_mesh(&prev_dir,8,8);
+        let handle: Handle<Mesh> = meshes.add(mesh);
+        let entity: Entity =commands.spawn((
+            Mesh3d(handle),
+            MeshMaterial3d(shared_materials.red_matl.clone()),
+            //Disabled,
+        )).observe(on_mouse_button_click).id();
+
         counter=counter+1;
     });
 
 
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: dxf_lines,
+            lines: dxf_lines_c,
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::WHITE,
         })),
     ));
+    commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: dxf_lines_t,
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::RED,
+        })),
+    ));
+}
+
+fn on_mouse_button_click(
+    click: Trigger<Pointer<Click>>,
+    mut commands: Commands,
+    disabled_entities: Query<Entity, With<Disabled>>,
+    mut query2: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>)>,
+    shared_materials: Res<SharedMaterials>,
+) {
+    match click.button {
+        PointerButton::Primary => {
+            let (e2, mut m2) = query2.get_mut(click.target.entity()).unwrap();
+            m2.0 = shared_materials.red_matl.clone();
+        }
+        PointerButton::Secondary => {}
+        PointerButton::Middle => {}
+    }
+
+    //println!("{}  {} was clicked!", s.id,s2.0.id());
 }

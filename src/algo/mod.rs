@@ -1,7 +1,7 @@
 pub mod cnc;
 use crate::algo::cnc::{gen_cyl, LRACLR};
 use cgmath::num_traits::real::Real;
-use cgmath::{Basis3, Deg, InnerSpace, MetricSpace, Rad, Rotation, Rotation3};
+use cgmath::{Basis3, Deg, InnerSpace, MetricSpace, Quaternion, Rad, Rotation, Rotation3};
 use encoding_rs::WINDOWS_1251;
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use itertools::{ChunkBy, Itertools};
@@ -17,7 +17,10 @@ use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::ops::{Mul, Sub};
 use std::vec::IntoIter;
+use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec3;
+use bevy::prelude::{Extrusion, Mesh, Quat, RegularPolygon};
+use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use cgmath::num_traits::abs;
 use cgmath::num_traits::float::FloatCore;
 use log::warn;
@@ -637,6 +640,33 @@ impl MainCylinder {
     pub fn recalculate_h(&mut self) {
         self.h = self.cb.loc.distance(self.ca.loc);
     }
+    pub fn to_mesh(&self, segments: usize) -> Mesh{
+        let rp: RegularPolygon = RegularPolygon::new(self.r as f32, segments as u32);
+        let (p1, p2) = {
+            let p1: cgmath::Point3<f32> = cgmath::Point3::new(self.ca.loc.x as f32, self.ca.loc.y as f32, self.ca.loc.z as f32);
+            let p2: cgmath::Point3<f32> = cgmath::Point3::new(self.cb.loc.x as f32, self.cb.loc.y as f32, self.cb.loc.z as f32);
+            let m1 = p1.to_vec().magnitude();
+            let m2 = p2.to_vec().magnitude();
+            if (m1 < m2) { (p1, p2) } else { (p2, p1) }
+        };
+
+        let vec: cgmath::Vector3<f32> = p2 - p1;
+        let len = vec.magnitude();
+        let vec_n: cgmath::Vector3<f32> = vec.normalize();
+        let vec_z: cgmath::Vector3<f32> = cgmath::Vector3::new(0.0, 0.0, 1.0);
+
+        let newrot: Basis3<f32> = Rotation::between_vectors(vec_z, vec_n);
+
+        let quart: Quaternion<f32> = Quaternion::from(newrot);
+        let rotation = Quat::from_xyzw(quart.v.x, quart.v.y, quart.v.z, quart.s);;
+
+        let mesh = Extrusion::new(rp, len);
+        let mut real_mesh: Mesh = Mesh::from(mesh);
+        real_mesh.translate_by(Vec3::new(0., 0., len / 2.0));
+        real_mesh.rotate_by(rotation);
+        real_mesh.translate_by(Vec3::new(p1.x, p1.y, p1.z));
+        real_mesh
+    }
 }
 #[derive(Clone,Debug)]
 pub struct BendToro {
@@ -932,7 +962,215 @@ impl BendToro {
 
         dxf_lines
     }
+    pub fn to_mesh(&self, prev_dir: &Vector3, segments: usize, tube_segments: usize) -> Mesh {
+        let mut index: u32 = 0;
+        let mut vertices: Vec<Vec3> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        let mut normals: Vec<Vec3> = Vec::new();
+        let mut uvs: Vec<[f32; 2]> = Vec::new();
 
+        let bend_s_dir = self.ca.loc.sub(self.bend_center_point);
+        let bend_e_dir = self.cb.loc.sub(self.bend_center_point);
+        let bend_diag_dir = self.cb.loc.sub(self.ca.loc).normalize();
+        //println!("ANGLE {:?}", bend_e_dir.angle(bend_s_dir).0);
+        let angle_step = bend_s_dir.angle(bend_e_dir).0 / TESS_TOR_STEP as f64;
+        let angle_step_rev = (2.0 * PI - bend_s_dir.angle(bend_e_dir).0) / TESS_TOR_STEP as f64;
+        let up_dir = self.up_dir().normalize();
+
+        let mut anchors: Vec<Point3> = {
+            let mut anchors_stright: Vec<Point3> = vec![];
+            let mut anchors_rev: Vec<Point3> = vec![];
+
+            let mut curr_angle_stright = 0.0;
+            for i in 0..=TESS_TOR_STEP {
+                let rotation: Basis3<f64> = Rotation3::from_axis_angle(up_dir, Rad(curr_angle_stright));
+                let nv = rotation.rotate_vector(bend_s_dir.clone());
+                let p = self.bend_center_point.clone() + nv;
+                anchors_stright.push(p);
+                curr_angle_stright = curr_angle_stright + angle_step;
+            }
+
+            let mut curr_angle_rev = 0.0;
+            for i in 0..=TESS_TOR_STEP {
+                let rotation: Basis3<f64> = Rotation3::from_axis_angle(up_dir, Rad(-curr_angle_rev));
+                let nv = rotation.rotate_vector(bend_s_dir.clone());
+                let p = self.bend_center_point.clone() + nv;
+                anchors_rev.push(p);
+                curr_angle_rev = curr_angle_rev + angle_step_rev;
+            }
+
+            let p_dir_stright = anchors_stright[1].sub(anchors_stright[0]);
+
+            let is_coplanar = p_dir_stright.dot(prev_dir.clone());
+            if (is_coplanar < 0.0) {
+                anchors_rev
+            } else {
+                anchors_stright
+            }
+        };
+        let mut circles: Vec<MainCircle> = vec![];
+        for i in 0..anchors.len() - 1 {
+            let pc0 = anchors[i];
+            let pc1 = anchors[i + 1];
+            let c_dir_0 = self.bend_center_point.clone().sub(pc0).normalize();
+            let c_dir_1 = self.bend_center_point.clone().sub(pc1).normalize();
+
+            let r_dir_0 = ((pc0.clone() + up_dir * self.r).sub(pc0)).normalize();
+            let r_dir_1 = ((pc1.clone() + up_dir * self.r).sub(pc1)).normalize();
+            let cdir0 = up_dir.cross(c_dir_0).normalize();
+            let cdir1 = up_dir.cross(c_dir_1).normalize();
+            let mc0 = MainCircle {
+                id: rand::thread_rng().gen_range(0..1024),
+                radius: self.r,
+                loc: pc0,
+                dir: cdir0,
+                radius_dir: r_dir_0,
+                r_gr_id: (round_by_dec(self.r, 5) * DIVIDER) as u64,
+            };
+            let mc1 = MainCircle {
+                id: rand::thread_rng().gen_range(0..1024),
+                radius: self.r,
+                loc: pc1,
+                dir: cdir1,
+                radius_dir: r_dir_1,
+                r_gr_id: (round_by_dec(self.r, 5) * DIVIDER) as u64,
+            };
+            circles.push(mc0);
+            circles.push(mc1);
+        }
+        for i in 0..circles.len() - 1 {
+                let c0 = circles[i].gen_points();
+            let c1 = circles[i + 1].gen_points();
+
+            for j in 0..c0.len() - 1 {
+                let p0 = c0[j];
+                let p1 = c0[j + 1];
+                let p2 = c1[j];
+                let p3 = c1[j + 1];
+
+
+                let plane = Plane::new(p0.clone(), p3.clone(), p1.clone());
+                let n = plane.normal().normalize();
+                let n_arr =Vec3::new(n.x as f32, n.y as f32, n.z as f32).normalize();
+                let r_dir = p0.sub(circles[i].loc);
+                let is_coplanar = n.dot(r_dir);
+                let uvsij=[
+                    i as f32 / segments as f32,
+                    j as f32 / tube_segments as f32,
+                ];
+                if (is_coplanar > 0.0) {
+                    {
+
+
+                        vertices.push(Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+                    }
+                    {
+
+                        vertices.push(Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+                    }
+                } else {
+                    {
+
+                        vertices.push(Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+
+                        vertices.push(Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+                    }
+                    {
+
+                        vertices.push(Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+
+                        vertices.push(Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32));
+                        uvs.push(uvsij);
+                        normals.push(n_arr);
+                        indices.push(index);
+                        index = index + 1;
+                    }
+                }
+            }
+        }
+
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList,  RenderAssetUsages::default() );
+
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            VertexAttributeValues::Float32x3(
+                vertices.iter().map(|v| [v.x, v.y, v.z]).collect(),
+            ),
+        );
+
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_NORMAL,
+            VertexAttributeValues::Float32x3(
+                normals.iter().map(|n| [n.x, n.y, n.z]).collect(),
+            ),
+        );
+
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            VertexAttributeValues::Float32x2(uvs),
+        );
+
+        mesh.insert_indices(Indices::U32(indices));
+
+        mesh
+    }
 }
 pub fn intersect_line_by_plane(cylinder_dir_vec: &Vector3, radius_vec: &Vector3, plane_point: &Point3, line_p0: &Point3, line_p1: &Point3, ) -> Point3 {
     //https://stackoverflow.com/questions/5666222/3d-line-plane-intersection
