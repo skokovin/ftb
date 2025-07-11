@@ -75,73 +75,87 @@ pub fn ui_system(mut contexts: EguiContexts,
             ui.separator();
             ui.menu_button("Demos", |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                let mut stp: Vec<u8>=vec![];
                 if ui.button("Demo1").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/1.stp")).as_slice());
+                    stp= Vec::from((include_bytes!("../files/1.stp")).as_slice());
 
                     ui.close_menu();
                 };
                 if ui.button("Demo2").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/2.stp")).as_slice());
-
+                    stp = Vec::from((include_bytes!("../files/2.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo3").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/3.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/3.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo4").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/4.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/4.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo5").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/5.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/5.stp")).as_slice());
 
                     ui.close_menu();
                 };
                 if ui.button("Demo6").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/6.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/6.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo7").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/7.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/7.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo8").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/8.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/8.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo9").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/9.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/9.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo10").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/10.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/10.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo11").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/11.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/11.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo12").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/12.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/12.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo13").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/13.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/13.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo14").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/14.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/14.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo15").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/15.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/15.stp")).as_slice());
                     ui.close_menu();
                 };
                 if ui.button("Demo16").clicked() {
-                    let stp: Vec<u8> = Vec::from((include_bytes!("../files/16.stp")).as_slice());
+                    stp = Vec::from((include_bytes!("../files/16.stp")).as_slice());
                     ui.close_menu();
                 };
+
+                if(!stp.is_empty()){
+                    for (entity,_) in &mut query_meshes {
+                        commands.entity(entity).despawn();
+                    }
+                    for (entity,_) in &mut query_centerlines {
+                        commands.entity(entity).despawn();
+                    }
+                    let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
+                    let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
+                    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
+                    bend_commands.straight = lraclr_arr;
+                }
+
             });
             ui.separator();
             ui.label("DORN L");
