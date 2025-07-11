@@ -16,7 +16,7 @@ use log::warn;
 use truck_base::bounding_box::BoundingBox;
 use truck_base::cgmath64::{Point3, Vector3};
 use truck_stepio::out;
-use crate::ui::app_settings::{ANGLE_SPEED, ROTATE_SPEED, STRIGHT_SPEED};
+
 
 const L: i32 = 0;
 const R: i32 = 1;

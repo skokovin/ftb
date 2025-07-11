@@ -19,8 +19,6 @@ use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::cnc::{cnc_to_poly, reverse_lraclr, LRACLR};
 use crate::algo::{analyze_stp, convert_to_meter, MainPipe};
 
-pub mod app_settings;
-
 pub fn ui_system(mut contexts: EguiContexts,
                  mut occupied_screen_space: ResMut<OccupiedScreenSpace>,
                  mut commands: Commands,
@@ -184,9 +182,11 @@ pub fn ui_system(mut contexts: EguiContexts,
         //let len_tors=tors.len();
         let col_width = 50.0;
         let col_heigth = 8.0;
-        let color = egui::Color32::from_rgb(255, 255, 255);
+
         egui::ScrollArea::vertical().show(ui, |ui| {
+
             ui.horizontal(|ui| {
+                let color = egui::Color32::from_rgb(255, 255, 255);
                 ui.add_sized([col_width, col_heigth],
                              egui::Label::new(egui::RichText::new("L").color(color)),
                 );
@@ -209,8 +209,23 @@ pub fn ui_system(mut contexts: EguiContexts,
                 ui.separator();
             });
             ui.separator();
-
+            let mut seleced_id=i32::MAX;
             let _ = &bend_commands.straight.iter().for_each(|lraclr| {
+
+                let color = if (lraclr.id1 == bend_commands.selected_id) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    }
+                else {
+                        egui::Color32::from_rgb(255, 255, 255)
+                    };
+                let color2 = if (lraclr.id2 == bend_commands.selected_id) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    }
+                else {
+                        egui::Color32::from_rgb(255, 255, 255)
+                    };
+
+
                 ui.horizontal(|ui| {
                     let l_labl = ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new(((lraclr.l * 1000.0) as i32).to_string()).color(color)));
                     if (l_labl.clicked()) {
@@ -218,6 +233,7 @@ pub fn ui_system(mut contexts: EguiContexts,
                             match pipe {
                                 MainPipe::Pipe(pipe) => {
                                     if (lraclr.id1 == pipe.id as i32) {
+                                        seleced_id=lraclr.id1;
                                         m.0 = shared_materials.pressed_matl.clone();
                                     } else {
                                         m.0 = shared_materials.white_matl.clone();
@@ -233,7 +249,7 @@ pub fn ui_system(mut contexts: EguiContexts,
                     ui.separator();
                     ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new(((lraclr.r) as i32).to_string()).color(color)));
                     ui.separator();
-                    let a_labl = ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new(((lraclr.a) as i32).to_string()).color(color)));
+                    let a_labl = ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new(((lraclr.a) as i32).to_string()).color(color2)));
                     if (a_labl.clicked()) {
                         query_pipes.iter_mut().for_each(|(mut m, pipe)| {
                             match pipe {
@@ -242,6 +258,7 @@ pub fn ui_system(mut contexts: EguiContexts,
                                 }
                                 MainPipe::Tor(tor) => {
                                     if (lraclr.id2 == tor.id as i32) {
+                                        seleced_id=lraclr.id2;
                                         m.0 = shared_materials.pressed_matl.clone();
                                     } else {
                                         m.0 = shared_materials.red_matl.clone();
@@ -251,14 +268,19 @@ pub fn ui_system(mut contexts: EguiContexts,
                         });
                     }
                     ui.separator();
-                    ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new((round((abs(Rad::from(Deg(lraclr.a)).0) * (lraclr.clr * 1000.0)) as f32) as i32).to_string()).color(color)));
+                    ui.add_sized([col_width, col_heigth], egui::Label::new(egui::RichText::new((round((abs(Rad::from(Deg(lraclr.a)).0) * (lraclr.clr * 1000.0)) as f32) as i32).to_string()).color(color2)));
                     ui.separator();
                     ui.add_sized([col_width, col_heigth],
-                                 egui::Label::new(egui::RichText::new(((lraclr.clr * 1000.0) as i32).to_string()).color(color)),
+                                 egui::Label::new(egui::RichText::new(((lraclr.clr * 1000.0) as i32).to_string()).color(color2)),
                     );
                     ui.separator();
                 });
             });
+
+            if(seleced_id!=i32::MAX){
+                bend_commands.selected_id=seleced_id;
+            }
+
         });
 
         let height = TextStyle::Body.resolve(ui.style()).size;

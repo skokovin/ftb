@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::sync::atomic::AtomicUsize;
 use bevy::asset::{AssetServer, Assets, Handle};
 use bevy::color::palettes::tailwind::{CYAN_300, GRAY_300, RED_300, YELLOW_300};
 use bevy::core_pipeline::bloom::Bloom;
@@ -30,6 +31,7 @@ use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter, BendToro, Mai
 use crate::algo::cnc::{cnc_to_poly, LRACLR};
 use crate::ui::{load_mesh, ui_system};
 
+
 mod algo;
 mod ui;
 mod adds;
@@ -55,9 +57,13 @@ struct OccupiedScreenSpace {
 pub struct VisibilityStore {
     pub visible_roots: Vec<Entity>,
 }
-#[derive(Default, Resource)]
+#[derive(Resource)]
 pub struct BendCommands {
     straight: Vec<LRACLR>,
+    selected_id: i32,
+}
+impl Default for BendCommands {
+    fn default() -> Self { BendCommands{ straight: vec![], selected_id: i32::MIN } }
 }
 
 #[derive(Resource)]
@@ -280,6 +286,7 @@ fn on_mouse_button_click(
     mut query_pipes: Query<(Entity, &mut MainPipe)>,
     //mut query_mat_pipes: Query<(&mut MeshMaterial3d<StandardMaterial>, &MainPipe)>,
     shared_materials: Res<SharedMaterials>,
+    mut bend_commands: ResMut<BendCommands>,
 ) {
     match click.button {
         PointerButton::Primary => {
@@ -299,8 +306,14 @@ fn on_mouse_button_click(
             match query_pipes.get_mut(click.target.entity()) {
                 Ok((ent, mut pipe)) => {
                     match pipe.as_mut() {
-                        MainPipe::Pipe(pipe) => { println!("cil {:?}", pipe.id); }
-                        MainPipe::Tor(tor) => { println!("cil {:?}", tor.id); }
+                        MainPipe::Pipe(pipe) => {
+                            bend_commands.selected_id= pipe.id as i32;
+                            println!("cil {:?}", pipe.id); 
+                        }
+                        MainPipe::Tor(tor) => {
+                            bend_commands.selected_id= tor.id as i32;
+                            println!("cil {:?}", tor.id); 
+                        }
                     };
                 }
                 Err(_) => {}
