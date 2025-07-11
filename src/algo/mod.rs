@@ -19,7 +19,7 @@ use std::ops::{Mul, Sub};
 use std::vec::IntoIter;
 use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec3;
-use bevy::prelude::{Extrusion, Mesh, Quat, RegularPolygon};
+use bevy::prelude::{Component, Extrusion, Mesh, Quat, RegularPolygon};
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use cgmath::num_traits::abs;
 use cgmath::num_traits::float::FloatCore;
@@ -260,6 +260,11 @@ impl MainCircle {
     }
 }
 
+#[derive(Debug,Component)]
+pub enum MainPipe{
+    Pipe(MainCylinder),
+    Tor(BendToro)
+}
 #[derive(Clone,Debug)]
 pub struct MainCylinder {
     pub id: u64,

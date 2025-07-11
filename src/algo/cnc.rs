@@ -222,6 +222,7 @@ pub fn reverse_lraclr(lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
 }
 
 pub fn cnc_to_poly(lraclr_arr: &Vec<LRACLR>, v_up_orign: &Vector3) -> (Vec<MainCylinder>, Vec<BendToro>) {
+
     let mut current_step = 0;
     let mut sp: Point3 = Point3::new(0.0, 0.0, 0.0);
     let mut v_up: Vector3 = v_up_orign.clone();
@@ -230,11 +231,13 @@ pub fn cnc_to_poly(lraclr_arr: &Vec<LRACLR>, v_up_orign: &Vector3) -> (Vec<MainC
     let mut cyls: Vec<MainCylinder> = vec![];
     let mut tors: Vec<BendToro> = vec![];
     lraclr_arr.iter().for_each(|lracl| {
+        let c_id=lracl.id1;
+        let t_id=lracl.id2;
         let pipe_r = lracl.pipe_radius;
         let bend_r = lracl.clr;
         let frw_move_dist = lracl.l;
         let ep = sp + v_frw.mul(frw_move_dist);
-        let cyl = generate_cyl_by_2pts(current_step, sp, ep, pipe_r, v_frw, v_up);
+        let cyl = generate_cyl_by_2pts(c_id as u64, sp, ep, pipe_r, v_frw, v_up);
         current_step = current_step + 1;
         //cyl.to_obj();
         cyls.push(cyl);
@@ -264,7 +267,7 @@ pub fn cnc_to_poly(lraclr_arr: &Vec<LRACLR>, v_up_orign: &Vector3) -> (Vec<MainC
             let rotation_x_half: Basis3<f64> = Rotation3::from_axis_angle(v_up, bend_angle_half);
             let v_frw_half = rotation_x_half.rotate_vector(v_frw_s);
             let ep = sp + v_frw_half.mul(dist_x);
-            let tor: BendToro = generate_tor_by_2pts(current_step, sp, ep, pipe_r, v_frw_s, v_frw, v_up, bend_r);
+            let tor: BendToro = generate_tor_by_2pts(t_id as u64, sp, ep, pipe_r, v_frw_s, v_frw, v_up, bend_r);
             current_step = current_step + 1;
             sp = ep;
             //tor.to_obj();

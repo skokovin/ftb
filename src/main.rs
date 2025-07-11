@@ -1,3 +1,4 @@
+use std::fs::File;
 use bevy::asset::{AssetServer, Assets, Handle};
 use bevy::color::palettes::tailwind::{CYAN_300, GRAY_300, RED_300, YELLOW_300};
 use bevy::core_pipeline::bloom::Bloom;
@@ -6,22 +7,28 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, With};
+use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, With};
+use bevy::prelude::ops::round;
 use bevy::render::camera::Viewport;
 use bevy::window::PrimaryWindow;
+use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::event::EventWriter;
 use bevy_ecs::prelude::{ContainsEntity, Trigger, Without};
+use bevy_ecs::query::QueryEntityError;
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui::egui::TextStyle;
 use bevy_http_client::{HttpClientPlugin, HttpRequest};
-use cgmath::{Point3, Vector3};
+use cgmath::{Deg, Point3, Rad, Vector3};
+use cgmath::num_traits::abs;
+use ruststep::itertools::Itertools;
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter};
+use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter, BendToro, MainCylinder, MainPipe};
 use crate::algo::cnc::{cnc_to_poly, LRACLR};
+use crate::ui::{load_mesh, ui_system};
 
 mod algo;
 mod ui;
@@ -32,7 +39,8 @@ pub enum ActiveArea {
     UI,
 }
 const CAMERA_TARGET: Vec3 = Vec3::new(0., 1., 0.);
-
+#[derive(Component, Clone)]
+struct PipeCenterLine;
 #[derive(Resource, Deref, DerefMut)]
 struct OriginalCameraTransform(Transform);
 #[derive(Default, Resource)]
@@ -47,7 +55,10 @@ struct OccupiedScreenSpace {
 pub struct VisibilityStore {
     pub visible_roots: Vec<Entity>,
 }
-
+#[derive(Default, Resource)]
+pub struct BendCommands {
+    straight: Vec<LRACLR>,
+}
 
 #[derive(Resource)]
 struct SharedMaterials {
@@ -61,7 +72,6 @@ struct SharedMaterials {
 }
 
 
-
 fn main2() {
     let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
     let mut the_fore_dir: Vector3<f32> = Vector3::new(1., 0., 0.);
@@ -69,28 +79,26 @@ fn main2() {
     let mut the_point: Point3<f32> = Point3::new(0., 0., 0.);
 
     let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    let mut dxf_lines: Vec<(Vec3, Vec3)>=vec![];
+    let mut dxf_lines: Vec<(Vec3, Vec3)> = vec![];
 
     let stp: Vec<u8> = Vec::from((include_bytes!("files/2.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
 
-    let (circles, tors)=cnc_to_poly(&lraclr_arr,&the_up_dir);
+    let (circles, tors) = cnc_to_poly(&lraclr_arr, &the_up_dir);
 
-    circles.iter().for_each(|c|{
-        let v1=Vec3::new(c.ca.loc.x as f32,c.ca.loc.y as f32,c.ca.loc.z as f32);
-        let v2=Vec3::new(c.cb.loc.x as f32,c.cb.loc.y as f32,c.cb.loc.z as f32);
-        dxf_lines.push((v1,v2));
+    circles.iter().for_each(|c| {
+        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
+        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
+        dxf_lines.push((v1, v2));
     });
 
-    let mut counter=0;
-    tors.iter().for_each(|t|{
-        let prev_dir=circles[counter].get_dir();
-        let lines=t.to_lines(&prev_dir);
+    let mut counter = 0;
+    tors.iter().for_each(|t| {
+        let prev_dir = circles[counter].get_dir();
+        let lines = t.to_lines(&prev_dir);
         dxf_lines.extend_from_slice(&lines);
-        counter=counter+1;
+        counter = counter + 1;
     });
-
-
 }
 
 fn main() {
@@ -108,20 +116,14 @@ fn main() {
     };
 
 
-    App::new().insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().add_plugins((
+    App::new().insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().add_plugins((
         DefaultPlugins,
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-    ))
-        .add_systems(PreStartup, setup_scene)
-        .add_systems(Startup, (setup_scene_utils,setup_drawings_layer))
-        .add_systems(PostStartup, after_setup_scene)
-        .add_systems(EguiPrimaryContextPass, (ui_system,))
-        .add_systems(Update, (update_camera_transform_system))
-        .run();
+    )).add_systems(PreStartup, setup_scene).add_systems(Startup, (setup_scene_utils, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).run();
 }
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
@@ -143,20 +145,20 @@ fn setup_scene(mut commands: Commands,
         pressed_matl,
         red_matl,
     };
-    commands.spawn((
-        PointLight {
-            color: Default::default(),
-            shadows_enabled: false,
-            affects_lightmapped_mesh_diffuse: false,
-            shadow_depth_bias: 0.0,
-            shadow_normal_bias: 0.0,
-            intensity: 10_000_000.,
-            range: 200.0,
-            radius: 200.0,
-            shadow_map_near_z: 0.0,
-        },
-        //Transform::from_xyz(8.0, 16.0, 8.0),
-    ));
+
+    /*    commands.spawn((
+            PointLight {
+                color: Default::default(),
+                shadows_enabled: false,
+                affects_lightmapped_mesh_diffuse: false,
+                shadow_depth_bias: 0.0,
+                shadow_normal_bias: 0.0,
+                intensity: 100.,
+                range: 2000.0,
+                radius: 2000.0,
+                shadow_map_near_z: 0.0,
+            },
+        ));*/
 
     let cam_trans = Transform::from_xyz(0.0, 7., 14.0).looking_at(CAMERA_TARGET, Vec3::Y);
     commands.insert_resource(OriginalCameraTransform(cam_trans));
@@ -170,7 +172,7 @@ fn setup_scene(mut commands: Commands,
         Tonemapping::AcesFitted,
         Bloom::default(),
         EnvironmentMapLight {
-            intensity: 10_000.0,
+            intensity: 1000.0,
             rotation: Default::default(),
             diffuse_map: shm.diffuse_map.clone(),
             specular_map: shm.specular_map.clone(),
@@ -192,38 +194,8 @@ fn setup_scene(mut commands: Commands,
     commands.insert_resource(shm);
 }
 fn after_setup_scene() {}
-fn ui_system(mut contexts: EguiContexts,
-             mut occupied_screen_space: ResMut<OccupiedScreenSpace>,
-             mut commands: Commands,
-             mut d3_camera: Query<&mut EditorCam>,
-             mut visibility_store: ResMut<VisibilityStore>, ) {
-    let ctx = contexts.ctx_mut();
-    occupied_screen_space.left = egui::SidePanel::left("left_panel").resizable(true).show(ctx.expect("REASON"), |ui| {
-        if (ui.rect_contains_pointer(ui.max_rect())) {
-            let mut c = d3_camera.single_mut().unwrap();
-            c.enabled_motion = EnabledMotion {
-                pan: false,
-                orbit: false,
-                zoom: false,
-            };
-        } else {
-            let mut c = d3_camera.single_mut().unwrap();
-            c.enabled_motion = EnabledMotion {
-                pan: true,
-                orbit: true,
-                zoom: true,
-            };
-        };
 
-        if ui.add(egui::widgets::Button::new("DemoHTTP")).clicked()
-        {
-            println!("CLICKED");
-        }
-        let height = TextStyle::Body.resolve(ui.style()).size;
 
-        ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
-    }).response.rect.width();
-}
 fn update_camera_transform_system(
     occupied_screen_space: Res<OccupiedScreenSpace>,
     //original_camera_transform: Res<OriginalCameraTransform>,
@@ -291,82 +263,52 @@ fn setup_scene_utils(
 fn setup_drawings_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut bend_commands: ResMut<BendCommands>,
     mut lines_materials: ResMut<Assets<LineMaterial>>,
-    shared_materials: Res<SharedMaterials>
-){
-    let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    let mut dxf_lines_c: Vec<(Vec3, Vec3)>=vec![];
-    let mut dxf_lines_t: Vec<(Vec3, Vec3)>=vec![];
-
+    shared_materials: Res<SharedMaterials>,
+) {
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    let (circles, tors)=cnc_to_poly(&lraclr_arr,&the_up_dir);
-
-    circles.iter().for_each(|c|{
-        let v1=Vec3::new(c.ca.loc.x as f32,c.ca.loc.y as f32,c.ca.loc.z as f32);
-        let v2=Vec3::new(c.cb.loc.x as f32,c.cb.loc.y as f32,c.cb.loc.z as f32);
-        dxf_lines_c.push((v1,v2));
-        let mesh=c.to_mesh(16);
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity =commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.white_matl.clone()),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
-    });
-
-    let mut counter=0;
-    tors.iter().for_each(|t|{
-        let prev_dir=circles[counter].get_dir();
-        let lines=t.to_lines(&prev_dir);
-        dxf_lines_t.extend_from_slice(&lines);
-
-        let mesh=t.to_mesh(&prev_dir,8,8);
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity =commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.red_matl.clone()),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
-
-        counter=counter+1;
-    });
-
-
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_c,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::WHITE,
-        })),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_t,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::RED,
-        })),
-    ));
+    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials);
+    bend_commands.straight = lraclr_arr;
 }
-
 fn on_mouse_button_click(
     click: Trigger<Pointer<Click>>,
     mut commands: Commands,
-    disabled_entities: Query<Entity, With<Disabled>>,
-    mut query2: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut query: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut query_pipes: Query<(Entity, &mut MainPipe)>,
+    //mut query_mat_pipes: Query<(&mut MeshMaterial3d<StandardMaterial>, &MainPipe)>,
     shared_materials: Res<SharedMaterials>,
 ) {
     match click.button {
         PointerButton::Primary => {
-            let (e2, mut m2) = query2.get_mut(click.target.entity()).unwrap();
-            m2.0 = shared_materials.red_matl.clone();
+            query.iter_mut().for_each(|(e, mut m)| {
+                match query_pipes.get_mut(e) {
+                    Ok((ent, mut pipe)) => {
+                        match pipe.as_mut() {
+                            MainPipe::Pipe(pipe) => { m.0 = shared_materials.white_matl.clone(); }
+                            MainPipe::Tor(tor) => { m.0 = shared_materials.red_matl.clone(); }
+                        };
+                    }
+                    Err(_) => {}
+                }
+            });
+            let (e2, mut m2) = query.get_mut(click.target.entity()).unwrap();
+            m2.0 = shared_materials.pressed_matl.clone();
+            match query_pipes.get_mut(click.target.entity()) {
+                Ok((ent, mut pipe)) => {
+                    match pipe.as_mut() {
+                        MainPipe::Pipe(pipe) => { println!("cil {:?}", pipe.id); }
+                        MainPipe::Tor(tor) => { println!("cil {:?}", tor.id); }
+                    };
+                }
+                Err(_) => {}
+            }
         }
         PointerButton::Secondary => {}
         PointerButton::Middle => {}
     }
-
-    //println!("{}  {} was clicked!", s.id,s2.0.id());
 }
+
+
