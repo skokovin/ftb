@@ -2627,7 +2627,6 @@ pub fn find_bending_surface(cyls: &Vec<MainCylinder>, tors: &Vec<(BendToro)>, ta
             }
         }
     });
-    warn!("RADIUS GR {:?}", radius_gr);
     let mut ncyls: Vec<MainCylinder> = vec![];
     let mut ntors: Vec<(BendToro)> = vec![];
     if (radius_gr > 0) {

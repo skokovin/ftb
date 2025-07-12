@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
 use bevy::asset::{AssetServer, Assets, Handle};
@@ -8,24 +9,27 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, With};
+use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
 use bevy::prelude::ops::round;
 use bevy::render::camera::Viewport;
-use bevy::window::PrimaryWindow;
+use bevy::window::{ExitCondition, PrimaryWindow};
+use bevy::winit::WinitWindows;
 use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::event::EventWriter;
-use bevy_ecs::prelude::{ContainsEntity, Trigger, Without};
+use bevy_ecs::prelude::{ContainsEntity, NonSend, Trigger, Without};
 use bevy_ecs::query::QueryEntityError;
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui::egui::TextStyle;
+
 use bevy_http_client::{HttpClientPlugin, HttpRequest};
 use cgmath::{Deg, Point3, Rad, Vector3};
 use cgmath::num_traits::abs;
 use ruststep::itertools::Itertools;
+use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter, BendToro, MainCylinder, MainPipe};
 use crate::algo::cnc::{cnc_to_poly, LRACLR};
@@ -40,7 +44,7 @@ pub enum ActiveArea {
     D3Spase,
     UI,
 }
-const CAMERA_TARGET: Vec3 = Vec3::new(0., 1., 0.);
+const CAMERA_TARGET: Vec3 = Vec3::new(0., 0., 0.);
 #[derive(Component, Clone)]
 struct PipeCenterLine;
 #[derive(Resource, Deref, DerefMut)]
@@ -61,9 +65,11 @@ pub struct VisibilityStore {
 pub struct BendCommands {
     straight: Vec<LRACLR>,
     selected_id: i32,
+    up_dir:cgmath::Vector3<f64>,
+    original_file:Vec<u8>
 }
 impl Default for BendCommands {
-    fn default() -> Self { BendCommands{ straight: vec![], selected_id: i32::MIN } }
+    fn default() -> Self { BendCommands{ straight: vec![], selected_id: i32::MIN ,up_dir:Vector3::new(0.0, 0.0, -1.0),original_file:vec![]}}
 }
 
 #[derive(Resource)]
@@ -78,34 +84,7 @@ struct SharedMaterials {
 }
 
 
-fn main2() {
-    let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    let mut the_fore_dir: Vector3<f32> = Vector3::new(1., 0., 0.);
-    let mut the_right_dir: Vector3<f32> = Vector3::new(0., 1., 0.);
-    let mut the_point: Point3<f32> = Point3::new(0., 0., 0.);
 
-    let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    let mut dxf_lines: Vec<(Vec3, Vec3)> = vec![];
-
-    let stp: Vec<u8> = Vec::from((include_bytes!("files/2.stp")).as_slice());
-    let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-
-    let (circles, tors) = cnc_to_poly(&lraclr_arr, &the_up_dir);
-
-    circles.iter().for_each(|c| {
-        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
-        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
-        dxf_lines.push((v1, v2));
-    });
-
-    let mut counter = 0;
-    tors.iter().for_each(|t| {
-        let prev_dir = circles[counter].get_dir();
-        let lines = t.to_lines(&prev_dir);
-        dxf_lines.extend_from_slice(&lines);
-        counter = counter + 1;
-    });
-}
 
 fn main() {
     let vis_stor = VisibilityStore {
@@ -133,7 +112,15 @@ fn main() {
 }
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
-               asset_server: Res<AssetServer>, ) {
+               asset_server: Res<AssetServer>,
+               windows: NonSend<WinitWindows>,) {
+
+
+    for window in windows.windows.values() {
+        window.set_title("Cansa Makina's pipe bend app");
+        window.set_window_icon(Some(load_icon()));
+    }
+
     let diffuse_map: Handle<Image> = asset_server.load("environment_maps/diffuse_rgb9e5_zstd.ktx2");
     let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
 
@@ -166,7 +153,7 @@ fn setup_scene(mut commands: Commands,
             },
         ));*/
 
-    let cam_trans = Transform::from_xyz(0.0, 7., 14.0).looking_at(CAMERA_TARGET, Vec3::Y);
+    let cam_trans = Transform::from_xyz(2.0, 0., 2.0).looking_at(CAMERA_TARGET, Vec3::Y);
     commands.insert_resource(OriginalCameraTransform(cam_trans));
     commands.spawn((
         Camera3d::default(),
@@ -276,8 +263,9 @@ fn setup_drawings_layer(
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials);
+    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials,&bend_commands.up_dir);
     bend_commands.straight = lraclr_arr;
+    bend_commands.original_file = stp;
 }
 fn on_mouse_button_click(
     click: Trigger<Pointer<Click>>,
@@ -325,3 +313,12 @@ fn on_mouse_button_click(
 }
 
 
+fn load_icon() -> Icon {
+    // Load your icon image here (example uses a small embedded image)
+    let icon_buf = include_bytes!("../assets/icons/img.png");
+    let image = image::load_from_memory(icon_buf)
+        .expect("Failed to load icon")
+        .into_rgba8();
+    let icon: Icon = Icon::from_rgba(image.to_vec(), image.width(), image.height()).unwrap();
+    icon
+}

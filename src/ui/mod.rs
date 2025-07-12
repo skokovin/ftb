@@ -1,5 +1,8 @@
 use std::fs;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use bevy::asset::{Assets, Handle};
 use bevy::color::LinearRgba;
 use bevy::math::ops::round;
@@ -14,6 +17,8 @@ use bevy_egui::{egui, EguiContexts};
 use bevy_egui::egui::TextStyle;
 use cgmath::num_traits::abs;
 use cgmath::{Deg, Rad, Vector3};
+use chrono::NaiveDate;
+use rfd::FileDialog;
 use crate::{on_mouse_button_click, BendCommands, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, VisibilityStore};
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::cnc::{cnc_to_poly, reverse_lraclr, LRACLR};
@@ -36,21 +41,24 @@ pub fn ui_system(mut contexts: EguiContexts,
     egui::TopBottomPanel::top("my_panel").show(ctx, |ui| {
         ui.horizontal_wrapped(|ui| {
             if ui.button("File").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("STEP", &["stp", "step"]).pick_file() {
-                    match fs::read(path) {
-                        Ok(stp) => {
-                            for (entity,_) in &mut query_meshes {
-                                commands.entity(entity).despawn();
+                if(test_date()){
+                    if let Some(path) = rfd::FileDialog::new().add_filter("STEP", &["stp", "step"]).pick_file() {
+                        match fs::read(path) {
+                            Ok(stp) => {
+                                for (entity,_) in &mut query_meshes {
+                                    commands.entity(entity).despawn();
+                                }
+                                for (entity,_) in &mut query_centerlines {
+                                    commands.entity(entity).despawn();
+                                }
+                                let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
+                                let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
+                                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &bend_commands.up_dir);
+                                bend_commands.straight = lraclr_arr;
+                                bend_commands.original_file = stp;
                             }
-                            for (entity,_) in &mut query_centerlines {
-                                commands.entity(entity).despawn();
-                            }
-                            let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
-                            let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                            load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
-                            bend_commands.straight = lraclr_arr;
+                            Err(_) => {}
                         }
-                        Err(_) => {}
                     }
                 }
             };
@@ -63,13 +71,23 @@ pub fn ui_system(mut contexts: EguiContexts,
                     commands.entity(entity).despawn();
                 }
                let lraclr_arr= reverse_lraclr( &bend_commands.straight);
-                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
+                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials,&bend_commands.up_dir);
                 bend_commands.straight = lraclr_arr;
             };
             ui.separator();
-            if ui.button("Simulate").clicked() {};
-            ui.separator();
-            if ui.button("CSV").clicked() {}
+
+/*            if ui.button("Simulate").clicked() {};
+            ui.separator();*/
+
+            if ui.button("CSV").clicked() {
+                if let Some(path) = FileDialog::new()
+                    .add_filter("CSV", &["csv"])
+                    .set_directory("/")
+                    .save_file(){
+                    save_csv(&bend_commands.straight,&path);
+                    println!("{:?}", path);
+                }
+            }
             ui.separator();
             ui.menu_button("Demos", |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -150,13 +168,36 @@ pub fn ui_system(mut contexts: EguiContexts,
                     }
                     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
                     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
+                    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials,&bend_commands.up_dir);
                     bend_commands.straight = lraclr_arr;
+                    bend_commands.original_file = stp;
                 }
 
             });
             ui.separator();
-            ui.label("DORN L");
+            let dorn_str=if(bend_commands.up_dir.z>0.0){"DORN R"}else{"DORN L"};
+
+            if(ui.button(dorn_str)).clicked(){
+
+                if(bend_commands.up_dir.z>0.0){
+                    bend_commands.up_dir.z=-1.0;
+                }
+                else{
+                    bend_commands.up_dir.z=1.0;
+                }
+
+                for (entity,_) in &mut query_meshes {
+                    commands.entity(entity).despawn();
+                }
+                for (entity,_) in &mut query_centerlines {
+                    commands.entity(entity).despawn();
+                }
+                let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&bend_commands.original_file);
+                let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
+                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials,&bend_commands.up_dir);
+                bend_commands.straight = lraclr_arr;
+
+            };
         });
     });
 
@@ -288,15 +329,15 @@ pub fn ui_system(mut contexts: EguiContexts,
     }).response.rect.width();
 }
 
-pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>) {
-    let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
+pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, the_up_dir: &Vector3<f64>) {
+    //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
     let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
     let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
 
     //    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     //let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    let (circles, tors) = cnc_to_poly(&lraclr_arr, &the_up_dir);
+    let (circles, tors) = cnc_to_poly(&lraclr_arr, the_up_dir);
 
     let mut counter = 0;
     for t in tors {
@@ -350,4 +391,37 @@ pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, co
         PipeCenterLine
     ));
     //lraclr_arr
+}
+
+pub fn save_csv(lraclr_arr: &Vec<LRACLR>, path: &PathBuf) {
+    let mut s_out = String::new();
+    if (!lraclr_arr.is_empty()) {
+        for i in 0..lraclr_arr.len() - 1 {
+            let lraclr = lraclr_arr[i].clone();
+            s_out.push_str(format!("{}{}", i, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.l*1000.0, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.r, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.a, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.clr*1000.0, ";").as_str());
+            s_out.push_str("0\r\n");
+        }
+        let last = lraclr_arr.last().unwrap().clone();
+        s_out.push_str(format!("{}{}", lraclr_arr.len() - 1, ";").as_str());
+        s_out.push_str(format!("{}{}", last.l*1000.0, ";").as_str());
+        s_out.push_str("\r\n");
+        //let mut d="C:\\tmp\\".to_string();
+        //let mut d = "".to_string();
+        //d.push_str(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64().to_string().as_str());
+        //d.push_str(".csv");
+
+        let f = OpenOptions::new().create(true).append(true).open(path).expect("Unable to open file");
+        let mut f = BufWriter::new(f);
+        f.write_all(s_out.as_bytes()).expect("Unable to write data");
+    }
+}
+
+pub fn test_date()->bool{
+    let today = chrono::Utc::now().date_naive();
+    let date2 = NaiveDate::from_ymd_opt(2026, 1, 20).unwrap();
+    today<date2
 }

@@ -3,6 +3,7 @@ name = "ftb"
 version = "0.1.0"
 edition = "2024"
 
+
 [dependencies]
 encoding_rs = "0.8.35"
 encoding_rs_io = "0.1.7"
@@ -29,3 +30,8 @@ bevy_editor_cam = "0.6.0"
 bevy_http_client = "0.8.3"
 bevy_egui = "0.35.1"
 rfd = "0.15.3"
+chrono = "0.4.41"
+image = "0.25.6"
+winit = "0.30.11"
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
