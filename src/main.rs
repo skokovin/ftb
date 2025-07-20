@@ -33,7 +33,7 @@ use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter, BendToro, MainCylinder, MainPipe};
 use crate::algo::cnc::{cnc_to_poly, LRACLR};
-use crate::ui::{load_mesh, ui_system};
+use crate::ui::{load_mesh, ui_system, UiState, LRAUI};
 
 
 mod algo;
@@ -101,14 +101,20 @@ fn main() {
     };
 
 
-    App::new().insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().add_plugins((
+    App::new().insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
+        .add_plugins((
         DefaultPlugins,
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-    )).add_systems(PreStartup, setup_scene).add_systems(Startup, (setup_scene_utils, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).run();
+    )).add_systems(PreStartup, setup_scene)
+        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
+        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(EguiPrimaryContextPass, (ui_system,))
+        .add_systems(Update, (update_camera_transform_system))
+        .run();
 }
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
@@ -257,14 +263,15 @@ fn setup_drawings_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut bend_commands: ResMut<BendCommands>,
+    mut ui_state: ResMut<UiState>,
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
 ) {
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials,&bend_commands.up_dir);
-    bend_commands.straight = lraclr_arr;
+    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials,&mut ui_state,&mut bend_commands);
+    //bend_commands.straight = lraclr_arr;
     bend_commands.original_file = stp;
 }
 fn on_mouse_button_click(
