@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
 use bevy::asset::{AssetServer, Assets, Handle};
@@ -267,7 +267,7 @@ fn setup_drawings_layer(
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
 ) {
-    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
+    let stp: Vec<u8> = Vec::from((include_bytes!("files/1.stp")).as_slice());
     let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
     let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
     load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials,&mut ui_state,&mut bend_commands);
