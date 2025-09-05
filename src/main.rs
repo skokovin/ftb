@@ -9,9 +9,10 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
+use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, Fixed, FixedUpdate, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
 use bevy::prelude::ops::round;
 use bevy::render::camera::Viewport;
+
 use bevy::window::{ExitCondition, PrimaryWindow};
 use bevy::winit::WinitWindows;
 use bevy_ecs::change_detection::Mut;
@@ -31,9 +32,9 @@ use cgmath::num_traits::abs;
 use ruststep::itertools::Itertools;
 use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::{analyze_stp, analyze_stp_path, convert_to_meter, BendToro, MainCylinder, MainPipe};
-use crate::algo::cnc::{cnc_to_poly, LRACLR};
-use crate::ui::{load_mesh, ui_system, UiState, LRAUI};
+use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder, MainPipe};
+use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
+use crate::ui::{load_anim_mesh, load_mesh, reload_mesh, ui_system, UiState, LRAUI};
 
 
 mod algo;
@@ -63,13 +64,14 @@ pub struct VisibilityStore {
 }
 #[derive(Resource)]
 pub struct BendCommands {
-    straight: Vec<LRACLR>,
-    selected_id: i32,
-    up_dir:cgmath::Vector3<f64>,
-    original_file:Vec<u8>
+    pub straight: Vec<LRACLR>,
+    pub selected_id: i32,
+    pub up_dir: cgmath::Vector3<f64>,
+    pub original_file: Vec<u8>,
+    pub anim_state: AnimState,
 }
 impl Default for BendCommands {
-    fn default() -> Self { BendCommands{ straight: vec![], selected_id: i32::MIN ,up_dir:Vector3::new(0.0, 0.0, -1.0),original_file:vec![]}}
+    fn default() -> Self { BendCommands { straight: vec![], selected_id: i32::MIN, up_dir: Vector3::new(0.0, 0.0, -1.0), original_file: vec![], anim_state: AnimState::default() } }
 }
 
 #[derive(Resource)]
@@ -82,8 +84,6 @@ struct SharedMaterials {
     pressed_matl: Handle<StandardMaterial>,
     red_matl: Handle<StandardMaterial>,
 }
-
-
 
 
 fn main() {
@@ -101,27 +101,22 @@ fn main() {
     };
 
 
-    App::new().insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
-        .add_plugins((
+    App::new().insert_resource(Time::<Fixed>::from_hz(30.0))
+        .insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_plugins((
         DefaultPlugins,
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-    )).add_systems(PreStartup, setup_scene)
-        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
-        .add_systems(PostStartup, after_setup_scene)
-        .add_systems(EguiPrimaryContextPass, (ui_system,))
-        .add_systems(Update, (update_camera_transform_system))
+    )).add_systems(PreStartup, setup_scene).add_systems(Startup, (setup_scene_utils, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
+
         .run();
 }
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
                asset_server: Res<AssetServer>,
-               windows: NonSend<WinitWindows>,) {
-
-
+               windows: NonSend<WinitWindows>, ) {
     for window in windows.windows.values() {
         window.set_title("Cansa Makina's pipe bend app");
         window.set_window_icon(Some(load_icon()));
@@ -159,7 +154,7 @@ fn setup_scene(mut commands: Commands,
             },
         ));*/
 
-    let cam_trans = Transform::from_xyz(2.0, 0., 2.0).looking_at(CAMERA_TARGET, Vec3::Y);
+    let cam_trans = Transform::from_xyz(2000.0, 0., 2000.0).looking_at(CAMERA_TARGET, Vec3::Z);
     commands.insert_resource(OriginalCameraTransform(cam_trans));
     commands.spawn((
         Camera3d::default(),
@@ -181,7 +176,7 @@ fn setup_scene(mut commands: Commands,
             orbit_constraint: OrbitConstraint::Free,
             last_anchor_depth: -cam_trans.translation.length() as f64,
             orthographic: projections::OrthographicSettings {
-                scale_to_near_clip: 1_000_f32, // Needed for SSAO to work in ortho
+                scale_to_near_clip: 1_f32, // Needed for SSAO to work in ortho
                 ..Default::default()
             },
             ..Default::default()
@@ -227,14 +222,10 @@ fn update_camera_transform_system(
     Ok(())
 }
 
-fn setup_scene_utils(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut lines_materials: ResMut<Assets<LineMaterial>>,
-) {
+fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut lines_materials: ResMut<Assets<LineMaterial>>) {
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.05, 0.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(50.0, 0.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::GREEN,
@@ -243,7 +234,7 @@ fn setup_scene_utils(
 
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 5.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 50.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::RED,
@@ -251,7 +242,7 @@ fn setup_scene_utils(
     ));
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 5.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 50.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::BLUE,
@@ -268,12 +259,42 @@ fn setup_drawings_layer(
     shared_materials: Res<SharedMaterials>,
 ) {
     let stp: Vec<u8> = Vec::from((include_bytes!("files/1.stp")).as_slice());
-    let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
-    let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    load_mesh(&lraclr_arr,&mut meshes,&mut commands,&shared_materials,&mut lines_materials,&mut ui_state,&mut bend_commands);
+    let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
+    //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
+    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
     //bend_commands.straight = lraclr_arr;
     bend_commands.original_file = stp;
 }
+
+fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendCommands>, mut query_meshes: Query<(Entity, &MainPipe)>, mut query_centerlines: Query<(Entity, &PipeCenterLine)>, mut commands: Commands,
+                    shared_materials: Res<SharedMaterials>,
+                    mut meshes: ResMut<Assets<Mesh>>,
+                    mut ui_state: ResMut<UiState>,
+                    mut lines_materials: ResMut<Assets<LineMaterial>>, ) {
+    match bend_commands.anim_state.status {
+        AnimStatus::Enabled => {
+            bend_commands.anim_state.dt = time.delta_secs_f64();
+            let (c, t) = cnc_to_poly_animate(&mut bend_commands);
+                for (entity, _) in &mut query_meshes {
+                    commands.entity(entity).despawn();
+                }
+                for (entity, _) in &mut query_centerlines {
+                    commands.entity(entity).despawn();
+                }
+                load_anim_mesh(c, t, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
+
+        }
+        AnimStatus::Disabled => {
+
+        }
+        AnimStatus::Finished => {
+            bend_commands.anim_state.status=AnimStatus::Disabled;
+            reload_mesh( &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+            println!("anim finished");
+        }
+    }
+}
+
 fn on_mouse_button_click(
     click: Trigger<Pointer<Click>>,
     mut commands: Commands,
@@ -302,12 +323,12 @@ fn on_mouse_button_click(
                 Ok((ent, mut pipe)) => {
                     match pipe.as_mut() {
                         MainPipe::Pipe(pipe) => {
-                            bend_commands.selected_id= pipe.id as i32;
-                            println!("cil {:?}", pipe.id); 
+                            bend_commands.selected_id = pipe.id as i32;
+                            println!("cil {:?}", pipe.id);
                         }
                         MainPipe::Tor(tor) => {
-                            bend_commands.selected_id= tor.id as i32;
-                            println!("cil {:?}", tor.id); 
+                            bend_commands.selected_id = tor.id as i32;
+                            println!("cil {:?}", tor.id);
                         }
                     };
                 }
@@ -323,9 +344,7 @@ fn on_mouse_button_click(
 fn load_icon() -> Icon {
     // Load your icon image here (example uses a small embedded image)
     let icon_buf = include_bytes!("../assets/icons/img.png");
-    let image = image::load_from_memory(icon_buf)
-        .expect("Failed to load icon")
-        .into_rgba8();
+    let image = image::load_from_memory(icon_buf).expect("Failed to load icon").into_rgba8();
     let icon: Icon = Icon::from_rgba(image.to_vec(), image.width(), image.height()).unwrap();
     icon
 }

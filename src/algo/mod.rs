@@ -1,5 +1,5 @@
 pub mod cnc;
-use crate::algo::cnc::{gen_cyl, LRACLR};
+use crate::algo::cnc::{gen_cyl, AnimState, LRACLR};
 use cgmath::num_traits::real::Real;
 use cgmath::{Basis3, Deg, InnerSpace, MetricSpace, Quaternion, Rad, Rotation, Rotation3};
 use encoding_rs::WINDOWS_1251;
@@ -16,6 +16,7 @@ use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::ops::{Mul, Sub};
+use std::sync::atomic::Ordering;
 use std::vec::IntoIter;
 use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec3;
@@ -33,6 +34,7 @@ use truck_geometry::prelude::{BSplineCurve, Plane};
 use truck_meshalgo::prelude::*;
 use truck_stepio::r#in::{Axis2Placement3dHolder, Axis2PlacementHolder, BSplineCurveWithKnots, CartesianPoint, CartesianPointHolder, CurveAnyHolder, DirectionHolder, FaceBoundHolder, NonRationalBSplineCurveHolder, NonRationalBSplineSurfaceHolder, Table, VectorHolder, VertexPointHolder};
 use utf8_read::Reader;
+use crate::ui::{ANGLE_SPEED, ROTATE_SPEED, STRIGHT_SPEED};
 
 pub const PI36_FLOAT_RANGE: [f64; 36] = {
     let mut v: [f64; 36] = [0.0; 36];
@@ -1372,7 +1374,9 @@ pub fn analyze_stp(_stp: &Vec<u8>) -> Vec<LRACLR> {
 
 }
 
-pub fn convert_to_meter(lracmd: &Vec<LRACLR>) -> Vec<LRACLR> {
+
+
+/*pub fn convert_to_meter(lracmd: &Vec<LRACLR>) -> Vec<LRACLR> {
     let mut lra:Vec<LRACLR>=vec![];
     lracmd.iter().for_each(|lr| {
         let mut nlra=lr.clone();
@@ -1382,7 +1386,7 @@ pub fn convert_to_meter(lracmd: &Vec<LRACLR>) -> Vec<LRACLR> {
         lra.push(nlra);
     });
     lra
-}
+}*/
 
 pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendToro>) {
     let mut toros: Vec<BendToro> = vec![];
@@ -3016,5 +3020,4 @@ fn calculate_extra_len(a:MainCylinder, b:MainCylinder, table: &Table, scale: f64
 
     (start,end)
 }
-
 
