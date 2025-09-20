@@ -49,19 +49,21 @@ pub const PI36_FLOAT_RANGE: [f64; 36] = {
     }
     v
 };
-pub const HALF_PI18_FLOAT_RANGE: [f64; 18] = {
-    let mut v: [f64; 18] = [0.0; 18];
+pub const HALF_PI18_FLOAT_RANGE: [f64; 64] = {
+    let mut v: [f64; 64] = [0.0; 64];
     let mut i = 0;
     loop{
-        if i >= 17 {
+        if i >= 63 {
             v[i]=PI;
             break;
         }
-        v[i]=PI/18.0 * i as f64;
+        v[i]=PI/64.0 * i as f64;
         i += 1;
     }
     v
 };
+
+pub const CILINDER_TRIANGULATION_SEGMENTS:u32 = 64;
 pub const HALF_PI4_FLOAT_RANGE: [f64; 4] = {
     let mut v: [f64; 4] = [0.0; 4];
     let mut i = 0;
@@ -84,7 +86,7 @@ pub const P_UP_REVERSE: Vector3 = Vector3::new(0.0, 0.0, -1.0);
 pub const ROT_DIR_CCW: f64 = -1.0;
 pub const TESS_TOL_ANGLE: f64 = 18.0;
 pub const TESS_TOL_TOR_ANGLE: f64 = 18.0;
-pub const TESS_TOR_STEP: u64 = 20;
+pub const TESS_TOR_STEP: u64 = 50;
 pub const Z_FIGHTING_FACTOR: f32 = 1.0;
 const CAP_TRIANGULATION: Rad<f64> = Rad(PI / 180.0);
 pub const TOLE: f64 = 0.9;
@@ -647,8 +649,8 @@ impl MainCylinder {
     pub fn recalculate_h(&mut self) {
         self.h = self.cb.loc.distance(self.ca.loc);
     }
-    pub fn to_mesh(&self, segments: usize) -> Mesh{
-        let rp: RegularPolygon = RegularPolygon::new(self.r as f32, segments as u32);
+    pub fn to_mesh(&self) -> Mesh{
+        let rp: RegularPolygon = RegularPolygon::new(self.r as f32, CILINDER_TRIANGULATION_SEGMENTS);
         let (p1, p2) = {
             let p1: cgmath::Point3<f32> = cgmath::Point3::new(self.ca.loc.x as f32, self.ca.loc.y as f32, self.ca.loc.z as f32);
             let p2: cgmath::Point3<f32> = cgmath::Point3::new(self.cb.loc.x as f32, self.cb.loc.y as f32, self.cb.loc.z as f32);

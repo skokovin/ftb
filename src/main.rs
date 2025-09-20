@@ -1,15 +1,17 @@
-//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::f32::consts::PI;
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
 use bevy::asset::{AssetServer, Assets, Handle};
-use bevy::color::palettes::tailwind::{CYAN_300, GRAY_300, RED_300, YELLOW_300};
+use bevy::color::palettes::tailwind::{BLUE_500, CYAN_300, GRAY_300, GRAY_600, RED_300, RED_500, YELLOW_300};
 use bevy::core_pipeline::bloom::Bloom;
 use bevy::core_pipeline::smaa::Smaa;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, EnvironmentMapLight, Fixed, FixedUpdate, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Query, Res, ResMut, Resource, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
+use bevy::pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion, StandardMaterial};
+use bevy::prelude::{default, light_consts, App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, DirectionalLight, EnvironmentMapLight, EulerRot, Fixed, FixedUpdate, GltfAssetLabel, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Quat, Query, Res, ResMut, Resource, Scene, SceneRoot, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
 use bevy::prelude::ops::round;
 use bevy::render::camera::Viewport;
 
@@ -101,15 +103,17 @@ fn main() {
     };
 
 
-    App::new().insert_resource(Time::<Fixed>::from_hz(30.0))
-        .insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_plugins((
+    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_plugins((
         DefaultPlugins,
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-    )).add_systems(PreStartup, setup_scene).add_systems(Startup, (setup_scene_utils, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
+    )).add_systems(PreStartup, setup_scene)
+        //.add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
+        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
+        .add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
 
         .run();
 }
@@ -125,11 +129,25 @@ fn setup_scene(mut commands: Commands,
     let diffuse_map: Handle<Image> = asset_server.load("environment_maps/diffuse_rgb9e5_zstd.ktx2");
     let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
 
-    let white_matl: Handle<StandardMaterial> = materials.add(Color::WHITE);
+    let white_matl: Handle<StandardMaterial> = materials.add(
+        StandardMaterial{
+            base_color: Color::from(BLUE_500), // Deep red color
+            metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
+            perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
+            reflectance: 0.7,                       // How much it reflects its environment
+            ..default()
+        }
+    );
     let ground_matl: Handle<StandardMaterial> = materials.add(Color::from(GRAY_300));
     let hover_matl: Handle<StandardMaterial> = materials.add(Color::from(CYAN_300));
     let pressed_matl: Handle<StandardMaterial> = materials.add(Color::from(YELLOW_300));
-    let red_matl: Handle<StandardMaterial> = materials.add(Color::from(RED_300));
+    let red_matl: Handle<StandardMaterial> = materials.add(StandardMaterial{
+        base_color: Color::from(RED_500), // Deep red color
+        metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
+        perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
+        reflectance: 0.7,                       // How much it reflects its environment
+        ..default()
+    });
     let shm = SharedMaterials {
         diffuse_map,
         specular_map,
@@ -139,22 +157,8 @@ fn setup_scene(mut commands: Commands,
         pressed_matl,
         red_matl,
     };
-
-    /*    commands.spawn((
-            PointLight {
-                color: Default::default(),
-                shadows_enabled: false,
-                affects_lightmapped_mesh_diffuse: false,
-                shadow_depth_bias: 0.0,
-                shadow_normal_bias: 0.0,
-                intensity: 100.,
-                range: 2000.0,
-                radius: 2000.0,
-                shadow_map_near_z: 0.0,
-            },
-        ));*/
-
-    let cam_trans = Transform::from_xyz(2000.0, 0., 2000.0).looking_at(CAMERA_TARGET, Vec3::Z);
+    let cam_trans = Transform::from_xyz(3000.0, 0., 3000.0).looking_at(CAMERA_TARGET, Vec3::Z);
+    //let cam_trans =  Transform::from_xyz(0.7, 0.7, 1.0).looking_at(Vec3::new(0.0, 0.3, 0.0), Vec3::Y);
     commands.insert_resource(OriginalCameraTransform(cam_trans));
     commands.spawn((
         Camera3d::default(),
@@ -165,8 +169,8 @@ fn setup_scene(mut commands: Commands,
         cam_trans.clone(),
         Tonemapping::AcesFitted,
         Bloom::default(),
-        EnvironmentMapLight {
-            intensity: 1000.0,
+       EnvironmentMapLight {
+            intensity: 7000.0,
             rotation: Default::default(),
             diffuse_map: shm.diffuse_map.clone(),
             specular_map: shm.specular_map.clone(),
@@ -187,6 +191,42 @@ fn setup_scene(mut commands: Commands,
     ));
     commands.insert_resource(shm);
 }
+
+
+fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
+
+    commands.spawn(
+        (
+            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m1/fhole_stp.gltf"))),
+            Transform {
+                translation:  Vec3::new(-3058.0,-289.37,  -154.89),//Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI)*Quat::from_rotation_z(std::f32::consts::PI/2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+            //Transform::from_scale(Vec3::new(1000.0, 1000.0, 1000.0),
+
+        )
+
+        //asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/FlightHelmet/FlightHelmet.gltf")),
+    );
+
+    // Light
+   commands.spawn((
+        DirectionalLight {
+            illuminance: light_consts::lux::FULL_DAYLIGHT,
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI * -0.15, PI * -0.15)),
+        CascadeShadowConfigBuilder {
+            maximum_distance: 3000.0,
+            first_cascade_far_bound: 900.0,
+            ..default()
+        }.build(),
+    ));
+}
+
+
 fn after_setup_scene() {}
 
 
@@ -225,7 +265,7 @@ fn update_camera_transform_system(
 fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut lines_materials: ResMut<Assets<LineMaterial>>) {
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(50.0, 0.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(1500.0, 0.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::GREEN,
@@ -234,7 +274,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
 
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 50.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1500.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::RED,
@@ -242,7 +282,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
     ));
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 50.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1500.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::BLUE,
@@ -260,9 +300,7 @@ fn setup_drawings_layer(
 ) {
     let stp: Vec<u8> = Vec::from((include_bytes!("files/1.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-    //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
     load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-    //bend_commands.straight = lraclr_arr;
     bend_commands.original_file = stp;
 }
 
@@ -275,21 +313,18 @@ fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendComman
         AnimStatus::Enabled => {
             bend_commands.anim_state.dt = time.delta_secs_f64();
             let (c, t) = cnc_to_poly_animate(&mut bend_commands);
-                for (entity, _) in &mut query_meshes {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_centerlines {
-                    commands.entity(entity).despawn();
-                }
-                load_anim_mesh(c, t, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
-
+            for (entity, _) in &mut query_meshes {
+                commands.entity(entity).despawn();
+            }
+            for (entity, _) in &mut query_centerlines {
+                commands.entity(entity).despawn();
+            }
+            load_anim_mesh(c, t, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
         }
-        AnimStatus::Disabled => {
-
-        }
+        AnimStatus::Disabled => {}
         AnimStatus::Finished => {
-            bend_commands.anim_state.status=AnimStatus::Disabled;
-            reload_mesh( &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+            bend_commands.anim_state.status = AnimStatus::Disabled;
+            reload_mesh(&mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
             println!("anim finished");
         }
     }

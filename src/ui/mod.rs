@@ -630,7 +630,7 @@ pub fn reload_mesh(meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, s
         let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
         let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
         dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh(16);
+        let mesh = c.to_mesh();
         let handle: Handle<Mesh> = meshes.add(mesh);
         let entity: Entity = commands.spawn((
             Mesh3d(handle),
@@ -695,7 +695,7 @@ pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, co
         let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
         let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
         dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh(16);
+        let mesh = c.to_mesh();
         let handle: Handle<Mesh> = meshes.add(mesh);
         let entity: Entity = commands.spawn((
             Mesh3d(handle),
@@ -752,7 +752,7 @@ pub fn load_anim_mesh(circles: Vec<MainCylinder>, tors: Vec<BendToro>, meshes: &
         let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
         let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
         dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh(16);
+        let mesh = c.to_mesh();
         let handle: Handle<Mesh> = meshes.add(mesh);
         let entity: Entity = commands.spawn((
             Mesh3d(handle),

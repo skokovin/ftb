@@ -1,1 +1,6 @@
 /target
+/.idea/.gitignore
+/Cargo.lock
+/.idea/ftb.iml
+/.idea/modules.xml
+/.idea/vcs.xml
