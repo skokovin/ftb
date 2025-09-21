@@ -11,7 +11,8 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion, StandardMaterial};
-use bevy::prelude::{default, light_consts, App, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, DirectionalLight, EnvironmentMapLight, EulerRot, Fixed, FixedUpdate, GltfAssetLabel, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Quat, Query, Res, ResMut, Resource, Scene, SceneRoot, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
+use bevy::platform::collections::HashMap;
+use bevy::prelude::{default, light_consts, App, AssetEvent, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, DirectionalLight, EnvironmentMapLight, EulerRot, Fixed, FixedUpdate, GltfAssetLabel, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Quat, Query, Res, ResMut, Resource, Scene, SceneRoot, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
 use bevy::prelude::ops::round;
 use bevy::render::camera::Viewport;
 
@@ -21,7 +22,7 @@ use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::event::EventWriter;
-use bevy_ecs::prelude::{ContainsEntity, NonSend, Trigger, Without};
+use bevy_ecs::prelude::{ContainsEntity, EventReader, NonSend, Trigger, Without};
 use bevy_ecs::query::QueryEntityError;
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
@@ -87,6 +88,12 @@ struct SharedMaterials {
     red_matl: Handle<StandardMaterial>,
 }
 
+#[derive(Resource)]
+struct MachineAssets {
+    handles: HashMap<String, Handle<Scene>>,
+    meshes_loaded: bool,
+}
+
 
 fn main() {
     let vis_stor = VisibilityStore {
@@ -112,11 +119,33 @@ fn main() {
         MaterialPlugin::<LineMaterial>::default(),
     )).add_systems(PreStartup, setup_scene)
         //.add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
-        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
-        .add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
+        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
 
         .run();
 }
+
+fn load_models(mut commands: Commands, asset_server: Res<AssetServer>) {
+
+    // Load multiple GLTF models
+    let model_handles = HashMap::from([
+        ("dayama_alt".to_string(), asset_server.load("machines/m2/dayama_alt.glb#Scene0")),
+        ("dayamam_kizak".to_string(), asset_server.load("machines/m2/dayamam_kizak.glb#Scene0")),
+        ("dayamam_kizak_arka".to_string(), asset_server.load("machines/m2/dayamam_kizak_arka.glb#Scene0")),
+        ("malafa".to_string(), asset_server.load("machines/m2/malafa.glb#Scene0")),
+        ("mengene".to_string(), asset_server.load("machines/m2/mengene.glb#Scene0")),
+        ("mengene_alt".to_string(), asset_server.load("machines/m2/mengene_alt.glb#Scene0")),
+        ("palka2m".to_string(), asset_server.load("machines/m2/palka2m.glb#Scene0")),
+        ("palkam".to_string(), asset_server.load("machines/m2/palkam.glb#Scene0")),
+        ("pens".to_string(), asset_server.load("machines/m2/pens.glb#Scene0")),
+        ("sasi".to_string(), asset_server.load("machines/m2/sasi.glb")),
+    ]);
+
+    commands.insert_resource(MachineAssets {
+        handles: model_handles,
+        meshes_loaded: false,
+    });
+}
+
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
                asset_server: Res<AssetServer>,
@@ -130,7 +159,7 @@ fn setup_scene(mut commands: Commands,
     let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
 
     let white_matl: Handle<StandardMaterial> = materials.add(
-        StandardMaterial{
+        StandardMaterial {
             base_color: Color::from(BLUE_500), // Deep red color
             metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
             perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
@@ -141,7 +170,7 @@ fn setup_scene(mut commands: Commands,
     let ground_matl: Handle<StandardMaterial> = materials.add(Color::from(GRAY_300));
     let hover_matl: Handle<StandardMaterial> = materials.add(Color::from(CYAN_300));
     let pressed_matl: Handle<StandardMaterial> = materials.add(Color::from(YELLOW_300));
-    let red_matl: Handle<StandardMaterial> = materials.add(StandardMaterial{
+    let red_matl: Handle<StandardMaterial> = materials.add(StandardMaterial {
         base_color: Color::from(RED_500), // Deep red color
         metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
         perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
@@ -169,13 +198,23 @@ fn setup_scene(mut commands: Commands,
         cam_trans.clone(),
         Tonemapping::AcesFitted,
         Bloom::default(),
-       EnvironmentMapLight {
+        EnvironmentMapLight {
             intensity: 7000.0,
             rotation: Default::default(),
             diffuse_map: shm.diffuse_map.clone(),
             specular_map: shm.specular_map.clone(),
             affects_lightmapped_mesh_diffuse: true,
         },
+        /*     DirectionalLight {
+            illuminance: light_consts::lux::FULL_DAYLIGHT,
+            shadows_enabled: true,
+            ..default()
+        },
+        CascadeShadowConfigBuilder {
+                 maximum_distance: 3000.0,
+                 first_cascade_far_bound: 900.0,
+                 ..default()
+             }.build(),*/
         EditorCam {
             orbit_constraint: OrbitConstraint::Free,
             last_anchor_depth: -cam_trans.translation.length() as f64,
@@ -194,35 +233,137 @@ fn setup_scene(mut commands: Commands,
 
 
 fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
+    let dayama_alt: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayama_alt2.glb")));
+    let dayamam_kizak: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayamam_kizak2.glb")));
+    let dayamam_kizak_arka: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayamam_kizak_arka2.glb")));
+    let malafa: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/malafa.glb")));
+    let mengene: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/mengene.glb")));
+    let mengene_alt: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/mengene_alt.glb")));
+    let palka2m: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/palka2m.glb")));
+    let palkam: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/palkam.glb")));
+    let pens: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/pens.glb")));
+    let sasi: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/sasi.glb")));
+
 
     commands.spawn(
         (
-            SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m1/fhole_stp.gltf"))),
+            dayamam_kizak_arka,
             Transform {
-                translation:  Vec3::new(-3058.0,-289.37,  -154.89),//Vec3::new(289.37, -3058.0, -154.89)
-                rotation: Quat::from_rotation_y(std::f32::consts::PI)*Quat::from_rotation_z(std::f32::consts::PI/2.0),
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             }
-            //Transform::from_scale(Vec3::new(1000.0, 1000.0, 1000.0),
-
         )
+    );
+    commands.spawn(
+        (
+            dayamam_kizak,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+    commands.spawn(
+        (
+            dayama_alt,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
 
-        //asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/FlightHelmet/FlightHelmet.gltf")),
+    commands.spawn(
+        (
+            mengene_alt,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+
+    commands.spawn(
+        (
+            mengene,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+    commands.spawn(
+        (
+            palka2m,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+
+    commands.spawn(
+        (
+            palkam,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+
+    commands.spawn(
+        (
+            pens,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+
+    commands.spawn(
+        (
+            malafa,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
+    );
+    commands.spawn(
+        (
+            sasi,
+            Transform {
+                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+                scale: Vec3::new(1000.0, 1000.0, 1000.0),
+            }
+        )
     );
 
     // Light
-   commands.spawn((
+    commands.spawn((
         DirectionalLight {
             illuminance: light_consts::lux::FULL_DAYLIGHT,
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI * -0.15, PI * -0.15)),
         CascadeShadowConfigBuilder {
             maximum_distance: 3000.0,
             first_cascade_far_bound: 900.0,
             ..default()
         }.build(),
+        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI * -0.15, PI * -0.15)),
     ));
 }
 
