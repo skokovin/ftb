@@ -1,6 +1,7 @@
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::{Mesh, Vec3};
-use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+
 
 pub mod line;
 

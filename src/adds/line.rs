@@ -1,8 +1,11 @@
 use bevy::asset::RenderAssetUsages;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
-use bevy::render::mesh::MeshVertexBufferLayoutRef;
-use bevy::render::render_resource::{AsBindGroup, PolygonMode, PrimitiveTopology, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
+
+use bevy::render::render_resource::{AsBindGroup, PolygonMode, PrimitiveTopology, RenderPipelineDescriptor, SpecializedMeshPipelineError};
+use bevy::shader::ShaderRef;
+
 const SHADER_ASSET_PATH: &str = "shaders/line_material.wgsl";
 
 #[derive(Debug, Clone)]
@@ -38,7 +41,7 @@ impl Material for LineMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,

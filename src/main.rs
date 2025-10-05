@@ -3,18 +3,19 @@
 use std::f32::consts::PI;
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
+use bevy::anti_alias::smaa::Smaa;
 use bevy::asset::{AssetServer, Assets, Handle};
+use bevy::camera::Viewport;
 use bevy::color::palettes::tailwind::{BLUE_500, CYAN_300, GRAY_300, GRAY_600, RED_300, RED_500, YELLOW_300};
-use bevy::core_pipeline::bloom::Bloom;
-use bevy::core_pipeline::smaa::Smaa;
+
+
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
-use bevy::pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion, StandardMaterial};
+use bevy::light::CascadeShadowConfigBuilder;
+use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
 use bevy::platform::collections::HashMap;
-
-use bevy::render::camera::Viewport;
-
+use bevy::post_process::bloom::Bloom;
 use bevy::window::{ExitCondition, PrimaryWindow};
 use bevy::winit::WinitWindows;
 use bevy_ecs::change_detection::Mut;
@@ -116,8 +117,15 @@ fn main() {
     };
 
 
-    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_plugins((
-        DefaultPlugins,
+    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
+        .add_plugins((
+                         DefaultPlugins.set(WindowPlugin {
+                             primary_window: Some(Window {
+                                 title: "Cansa Makina's pipe bend app".to_string(),
+                                 ..default()
+                             }),
+                             ..default()
+                         }),
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
@@ -138,11 +146,8 @@ fn main() {
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
                asset_server: Res<AssetServer>,
-               windows: NonSend<WinitWindows>, ) {
-    for window in windows.windows.values() {
-        window.set_title("Cansa Makina's pipe bend app");
-        window.set_window_icon(Some(load_icon()));
-    }
+              ) {
+
 
     let diffuse_map: Handle<Image> = asset_server.load("environment_maps/diffuse_rgb9e5_zstd.ktx2");
     let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
@@ -181,7 +186,6 @@ fn setup_scene(mut commands: Commands,
     commands.spawn((
         Camera3d::default(),
         Camera {
-            hdr: true,
             ..Default::default()
         },
         cam_trans.clone(),
@@ -433,7 +437,13 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
 }
 
 
-fn after_setup_scene() {}
+fn after_setup_scene( ) {
+  /*  windows: NonSend<WinitWindows>,*/
+/*    for window in windows.windows.values() {
+        window.set_title("Cansa Makina's pipe bend app");
+        window.set_window_icon(Some(load_icon()));
+    }*/
+}
 
 
 fn update_camera_transform_system(
@@ -558,9 +568,9 @@ fn on_mouse_button_click(
                     Err(_) => {}
                 }
             });
-            let (e2, mut m2) = query.get_mut(click.target.entity()).unwrap();
+            let (e2, mut m2) = query.get_mut(click.target().entity()).unwrap();
             m2.0 = shared_materials.pressed_matl.clone();
-            match query_pipes.get_mut(click.target.entity()) {
+            match query_pipes.get_mut(click.target().entity()) {
                 Ok((ent, mut pipe)) => {
                     match pipe.as_mut() {
                         MainPipe::Pipe(pipe) => {

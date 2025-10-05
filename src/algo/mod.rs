@@ -20,8 +20,9 @@ use std::sync::atomic::Ordering;
 use std::vec::IntoIter;
 use bevy::asset::RenderAssetUsages;
 use bevy::math::Vec3;
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::{Component, Extrusion, Mesh, Quat, RegularPolygon};
-use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+
 use cgmath::num_traits::abs;
 use cgmath::num_traits::float::FloatCore;
 use log::warn;
