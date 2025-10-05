@@ -17,6 +17,7 @@ use bevy::prelude::{Mesh, Mesh3d, Resource};
 
 use bevy_ecs::change_detection::{Res, ResMut};
 use bevy_ecs::entity::Entity;
+use bevy_ecs::name::Name;
 use bevy_ecs::prelude::{Commands, Query};
 use bevy_editor_cam::prelude::{EditorCam, EnabledMotion};
 use bevy_egui::{egui, EguiContexts};
@@ -27,7 +28,7 @@ use chrono::NaiveDate;
 use egui_alignments::center_vertical;
 use rfd::FileDialog;
 use regex::Regex;
-use crate::{on_mouse_button_click, BendCommands, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, VisibilityStore};
+use crate::{on_mouse_button_click, BendCommands, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, SimpleAnimation, VisibilityStore};
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
 use crate::algo::{analyze_stp, BendToro, MainCylinder, MainPipe};
@@ -117,6 +118,7 @@ pub fn ui_system(mut contexts: EguiContexts,
                  mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
                  shared_materials: Res<SharedMaterials>,
                  mut meshes: ResMut<Assets<Mesh>>,
+                 mut query: Query<(&Name, &mut SimpleAnimation)>,
                  mut lines_materials: ResMut<Assets<LineMaterial>>,
 ) {
     let ctx = contexts.ctx_mut().expect("REASON");
@@ -243,6 +245,10 @@ pub fn ui_system(mut contexts: EguiContexts,
                     stp = Vec::from((include_bytes!("../files/16.stp")).as_slice());
                     ui.close_menu();
                 };
+                if ui.button("Demo17").clicked() {
+                    stp = Vec::from((include_bytes!("../files/17.stp")).as_slice());
+                    ui.close_menu();
+                };
 
                 if (!stp.is_empty()) {
                     for (entity, _) in &mut query_meshes {
@@ -259,6 +265,19 @@ pub fn ui_system(mut contexts: EguiContexts,
                 }
             });
             ui.separator();
+
+            if ui.button("A").clicked() {
+
+                for (name, mut animation) in &mut query {
+                    if (name.as_str() == "pens") {
+                        animation.duration = 3.0;
+                        animation.end_pos_x = 2000.0;
+                    }
+                }
+            }
+            ui.separator();
+
+
             let dorn_str = if (bend_commands.up_dir.z > 0.0) { "DORN R" } else { "DORN L" };
 
             if (ui.button(dorn_str)).clicked() {

@@ -12,8 +12,7 @@ use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion, StandardMaterial};
 use bevy::platform::collections::HashMap;
-use bevy::prelude::{default, light_consts, App, AssetEvent, Camera, Camera3d, Click, Color, Commands, Component, Deref, DerefMut, DirectionalLight, EnvironmentMapLight, EulerRot, Fixed, FixedUpdate, GltfAssetLabel, LinearRgba, MaterialPlugin, Mesh, Mesh3d, MeshMaterial3d, MeshPickingPlugin, Msaa, PluginGroup, PointLight, Pointer, PointerButton, PostStartup, PreStartup, Quat, Query, Res, ResMut, Resource, Scene, SceneRoot, Startup, Time, Transform, UVec2, Update, Vec3, Window, WindowPlugin, With};
-use bevy::prelude::ops::round;
+
 use bevy::render::camera::Viewport;
 
 use bevy::window::{ExitCondition, PrimaryWindow};
@@ -22,6 +21,7 @@ use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::event::EventWriter;
+use bevy_ecs::name::Name;
 use bevy_ecs::prelude::{ContainsEntity, EventReader, NonSend, Trigger, Without};
 use bevy_ecs::query::QueryEntityError;
 use bevy_editor_cam::DefaultEditorCamPlugins;
@@ -39,7 +39,7 @@ use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder, MainPip
 use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
 use crate::ui::{load_anim_mesh, load_mesh, reload_mesh, ui_system, UiState, LRAUI};
 
-
+use bevy::prelude::*;
 mod algo;
 mod ui;
 mod adds;
@@ -60,7 +60,13 @@ struct OccupiedScreenSpace {
     right: f32,
     bottom: f32,
 }
-
+#[derive(Component)]
+struct SimpleAnimation {
+    start_pos_x: f32,
+    end_pos_x: f32,
+    duration: f32,
+    elapsed: f32,
+}
 #[derive(Resource)]
 pub struct VisibilityStore {
     pub visible_roots: Vec<Entity>,
@@ -119,32 +125,15 @@ fn main() {
         MaterialPlugin::<LineMaterial>::default(),
     )).add_systems(PreStartup, setup_scene)
         //.add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
-        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer)).add_systems(PostStartup, after_setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,)).add_systems(Update, (update_camera_transform_system)).add_systems(FixedUpdate, animation_system)
+        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
+        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(EguiPrimaryContextPass, (ui_system,))
+        .add_systems(Update, (update_camera_transform_system,animate_simple))
+        .add_systems(FixedUpdate, animation_system)
 
         .run();
 }
 
-fn load_models(mut commands: Commands, asset_server: Res<AssetServer>) {
-
-    // Load multiple GLTF models
-    let model_handles = HashMap::from([
-        ("dayama_alt".to_string(), asset_server.load("machines/m2/dayama_alt.glb#Scene0")),
-        ("dayamam_kizak".to_string(), asset_server.load("machines/m2/dayamam_kizak.glb#Scene0")),
-        ("dayamam_kizak_arka".to_string(), asset_server.load("machines/m2/dayamam_kizak_arka.glb#Scene0")),
-        ("malafa".to_string(), asset_server.load("machines/m2/malafa.glb#Scene0")),
-        ("mengene".to_string(), asset_server.load("machines/m2/mengene.glb#Scene0")),
-        ("mengene_alt".to_string(), asset_server.load("machines/m2/mengene_alt.glb#Scene0")),
-        ("palka2m".to_string(), asset_server.load("machines/m2/palka2m.glb#Scene0")),
-        ("palkam".to_string(), asset_server.load("machines/m2/palkam.glb#Scene0")),
-        ("pens".to_string(), asset_server.load("machines/m2/pens.glb#Scene0")),
-        ("sasi".to_string(), asset_server.load("machines/m2/sasi.glb")),
-    ]);
-
-    commands.insert_resource(MachineAssets {
-        handles: model_handles,
-        meshes_loaded: false,
-    });
-}
 
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
@@ -233,6 +222,12 @@ fn setup_scene(mut commands: Commands,
 
 
 fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
+    let t:Transform= Transform {
+        translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+        rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+        scale: Vec3::new(1000.0, 1000.0, 1000.0),
+    };
+
     let dayama_alt: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayama_alt2.glb")));
     let dayamam_kizak: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayamam_kizak2.glb")));
     let dayamam_kizak_arka: SceneRoot = SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("machines/m2/dayamam_kizak_arka2.glb")));
@@ -252,7 +247,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("dayamam_kizak_arka"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
     commands.spawn(
@@ -262,7 +264,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("dayamam_kizak"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
     commands.spawn(
@@ -272,7 +281,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("dayama_alt"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -283,7 +299,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("mengene_alt"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -294,7 +317,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("mengene"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
     commands.spawn(
@@ -304,7 +334,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("palka2m"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -315,7 +352,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("palkam"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -326,7 +370,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("pens"),
+            SimpleAnimation {
+                start_pos_x: t.translation.x,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -337,7 +388,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("malafa"),
+            SimpleAnimation {
+                start_pos_x: 0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
     commands.spawn(
@@ -347,7 +405,14 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
-            }
+            },
+            Name::new("sasi"),
+            SimpleAnimation {
+                start_pos_x:0.0,
+                end_pos_x: 0.0,
+                duration: 0.0,
+                elapsed: 0.0,
+            },
         )
     );
 
@@ -515,6 +580,44 @@ fn on_mouse_button_click(
         PointerButton::Middle => {}
     }
 }
+
+
+fn animate_simple(
+    time: Res<Time>,
+    mut query: Query<(&mut Transform, &Name, &mut SimpleAnimation)>,
+) {
+    for (mut transform, name, mut animation) in &mut query {
+        if (animation.duration != 0.0) {
+            animation.elapsed += time.delta_secs();
+            // Loop the animation
+
+
+            // Calculate progress (0.0 to 1.0)
+            let progress = animation.elapsed / animation.duration;
+
+            // Use smooth step for easing
+            let t = smooth_step(progress);
+
+
+            // Interpolate position
+            transform.translation.x = animation.start_pos_x.lerp(animation.end_pos_x, t);
+            println!("{:?}", transform.translation.x);
+            if animation.elapsed > animation.duration {
+                animation.elapsed = 0.0;
+                animation.duration = 0.0;
+                transform.translation.x=animation.end_pos_x;
+                animation.start_pos_x=transform.translation.x;
+                //animation.start_pos_x = transform.translation.x;
+            }
+        }
+    }
+}
+
+fn smooth_step(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+
 
 
 fn load_icon() -> Icon {

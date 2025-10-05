@@ -9,19 +9,19 @@ edition = "2024"
 
 
 # Enable a small amount of optimization in the dev profile.
-[profile.dev]
-opt-level = 1
+#[profile.dev]
+#opt-level = 1
 
 # Enable a large amount of optimization in the dev profile for dependencies.
-[profile.dev.package."*"]
-opt-level = 3
+#[profile.dev.package."*"]
+#opt-level = 3
 
 [dependencies]
 encoding_rs = "0.8.35"
 encoding_rs_io = "0.1.7"
 itertools = "0.14.0"
 cgmath = "0.18.0"
-serde = { version = "1.0.225", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 log = "0.4.28"
 env_logger = "0.11.8"
 utf8-read = "0.4.0"
@@ -46,6 +46,6 @@ rfd = "0.15.4"
 chrono = "0.4.42"
 image = "0.25.8"
 winit = "0.30.12"
-regex = "1.11.1"
+regex = "1.11.2"
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

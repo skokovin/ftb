@@ -1587,14 +1587,22 @@ pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendTo
                                                                                                                 Some(ellipse) => {
                                                                                                                     found = true;
                                                                                                                     let (loc, dir, dir_rad) = extract_position(&table, &ellipse.position, scale);
+
                                                                                                                     let axe1 = ellipse.semi_axis_1;
                                                                                                                     let axe2 = ellipse.semi_axis_2;
 
-                                                                                                                    warn!("SEMIAXE {:?} {:?}",axe1, axe2);
-                                                                                                                    let p1 = loc.unwrap() + dir_rad.unwrap() * axe1;
-                                                                                                                    let p2 = loc.unwrap() + dir_rad.unwrap() * axe2;
-                                                                                                                    points.push(p1);
-                                                                                                                    points.push(p2);
+                                                                                                                    let dir_v=dir.unwrap().cross(dir_rad.unwrap()).normalize();
+                                                                                                                    let dir_u=dir_rad.unwrap().normalize();
+                                                                                                                    let c: Point3 =loc.unwrap();
+
+                                                                                                                    let steps: Vec<f64> = (0..=(2.0 * PI / 0.1) as usize)
+                                                                                                                        .map(|i| i as f64 * 0.1)
+                                                                                                                        .collect();
+
+                                                                                                                    steps.iter().for_each(|step| {
+                                                                                                                        let pt=c+axe1 * step.cos()*dir_u+axe2*step.sin()*dir_v;
+                                                                                                                        points.push(pt);
+                                                                                                                    });
                                                                                                                 }
                                                                                                             }
                                                                                                             match table.line.get(curve_id) {
@@ -1647,8 +1655,6 @@ pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendTo
                 }
                 PlaceHolder::Owned(_) => {}
             };
-
-
             let mut no_dubs = remove_circle_dublicates(&candidates);
             no_dubs.sort_by(|a, b| a.r_gr_id.cmp(&b.r_gr_id));
             counter = counter + 1;
@@ -1661,7 +1667,8 @@ pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendTo
                  let count = nv.len();
                  match count {
                      1 => {
-                         do_cyl_1(&nv[0], &points);
+                         let cyls =  do_cyl_1(&nv[0], &points);
+                         cilinders.extend(cyls);
                      }
                      2 => {
                          let (cyls, tors) = do_cyl_2(&nv[0], &nv[1], &points);
@@ -1679,46 +1686,6 @@ pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendTo
                      }
                  }
              });
-
-
-/*            {
-                if (no_dubs.len() == 2) {
-                    let (cyls, tors) = do_cyl_2(&no_dubs[0], &no_dubs[1], &points);
-                    cilinders.extend(cyls);
-                    toros.extend(tors);
-                }
-
-                if (no_dubs.len() == 1) {
-                    let cyls = do_cyl_1(&no_dubs[0], &points);
-                    cilinders.extend(cyls);
-                }
-
-                if (no_dubs.len() == 3) {
-                    if ((no_dubs[0].radius - no_dubs[1].radius).abs() < TOLE) {
-                        let (cyls, tors) = do_cyl_2(&no_dubs[0], &no_dubs[1], &points);
-                        cilinders.extend(cyls);
-                        toros.extend(tors);
-                    } else if ((no_dubs[0].radius - no_dubs[2].radius).abs() < TOLE) {
-                        let rr = no_dubs[0].radius;
-                        let (cyls, tors) = do_cyl_2(&no_dubs[0], &no_dubs[2], &points);
-                        cilinders.extend(cyls);
-                        toros.extend(tors);
-                    } else if ((no_dubs[1].radius - no_dubs[2].radius).abs() < TOLE) {
-                        let (cyls, tors) = do_cyl_2(&no_dubs[1], &no_dubs[2], &points);
-                        cilinders.extend(cyls);
-                        toros.extend(tors);
-                    }
-                }
-
-                if (no_dubs.len() > 3) {
-                    no_dubs.iter().for_each(|c| {
-                        warn!("no_dubs {:?}  {:?} ",counter, c.radius);
-                        let cyls = do_cyl_1(&c, &points);
-                        cilinders.extend(cyls);
-                    });
-                }
-            }*/
-
         });
     });
 
