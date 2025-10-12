@@ -917,6 +917,16 @@ impl BendToro {
         }
     }
 
+    pub fn get_len(&self) -> f64 {
+       let p0 = self.ca.loc;
+       let p1 = self.cb.loc;
+       let v0 = p0.sub(self.bend_center_point);
+       let v1 = p1.sub(self.bend_center_point);
+       let angle=v0.angle(v1);
+       let len = self.bend_radius * angle.0;
+       len
+    }
+
     pub fn to_lines(&self, prev_dir: &Vector3) -> Vec<(Vec3, Vec3)> {
         let mut dxf_lines: Vec<(Vec3, Vec3)>=vec![];
 

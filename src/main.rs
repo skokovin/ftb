@@ -1,8 +1,9 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::f32::consts::PI;
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::asset::{AssetServer, Assets, Handle};
 use bevy::camera::Viewport;
@@ -38,7 +39,7 @@ use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder, MainPipe};
 use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
-use crate::ui::{load_anim_mesh, load_mesh, reload_mesh, ui_system, UiState, LRAUI};
+use crate::ui::{byt, load_anim_mesh, load_mesh, load_mesh_centerline, reload_mesh, ui_system, UiState, LRAUI};
 
 use bevy::prelude::*;
 mod algo;
@@ -50,6 +51,15 @@ pub enum ActiveArea {
     UI,
 }
 const CAMERA_TARGET: Vec3 = Vec3::new(0., 0., 0.);
+
+#[derive(Event,Message, Debug)] // Using Debug for easy printing
+pub struct TickEvent;
+#[derive(Resource)]
+struct TickTimer(Timer);
+
+#[derive(Component, Clone)]
+struct TestLines;
+
 #[derive(Component, Clone)]
 struct PipeCenterLine;
 #[derive(Resource, Deref, DerefMut)]
@@ -79,9 +89,10 @@ pub struct BendCommands {
     pub up_dir: cgmath::Vector3<f64>,
     pub original_file: Vec<u8>,
     pub anim_state: AnimState,
+    pub t: f64,
 }
 impl Default for BendCommands {
-    fn default() -> Self { BendCommands { straight: vec![], selected_id: i32::MIN, up_dir: Vector3::new(0.0, 0.0, -1.0), original_file: vec![], anim_state: AnimState::default() } }
+    fn default() -> Self { BendCommands { straight: vec![], selected_id: i32::MIN, up_dir: Vector3::new(0.0, 0.0, -1.0), original_file: vec![], anim_state: AnimState::default(), t: 1.0 } }
 }
 
 #[derive(Resource)]
@@ -117,28 +128,41 @@ fn main() {
     };
 
 
-    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
+    App::new()
+        .insert_resource(Time::<Fixed>::from_hz(30.0))
+        .insert_resource(vis_stor).insert_resource(egui_settings)
+        .init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>()
+        .insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
+        .add_message::<TickEvent>()
+        // 2. Insert the timer resource
+        .insert_resource(TickTimer(Timer::new(
+            Duration::from_millis(20),
+            TimerMode::Repeating, // Make the timer repeat
+        )))
         .add_plugins((
-                         DefaultPlugins.set(WindowPlugin {
-                             primary_window: Some(Window {
-                                 title: "Cansa Makina's pipe bend app".to_string(),
-                                 ..default()
-                             }),
-                             ..default()
-                         }),
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Cansa Makina's pipe bend app".to_string(),
+                ..default()
+            }),
+            ..default()
+        }),
         HttpClientPlugin,
         MeshPickingPlugin,
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
     )).add_systems(PreStartup, setup_scene)
-        //.add_systems(Startup, (setup_scene_utils, setup_drawings_layer))
-        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
-        .add_systems(PostStartup, after_setup_scene)
         .add_systems(EguiPrimaryContextPass, (ui_system,))
-        .add_systems(Update, (update_camera_transform_system,animate_simple))
         .add_systems(FixedUpdate, animation_system)
 
+/*        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
+        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(Update, (update_camera_transform_system, animate_simple))*/
+
+        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,setup_machine))
+        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(Update, (tick_timer_system, event_listener_system,update_camera_transform_system,test_system))
         .run();
 }
 
@@ -146,9 +170,7 @@ fn main() {
 fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
                asset_server: Res<AssetServer>,
-              ) {
-
-
+) {
     let diffuse_map: Handle<Image> = asset_server.load("environment_maps/diffuse_rgb9e5_zstd.ktx2");
     let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
 
@@ -226,7 +248,7 @@ fn setup_scene(mut commands: Commands,
 
 
 fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let t:Transform= Transform {
+    let t: Transform = Transform {
         translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
         rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
         scale: Vec3::new(1000.0, 1000.0, 1000.0),
@@ -412,7 +434,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             },
             Name::new("sasi"),
             SimpleAnimation {
-                start_pos_x:0.0,
+                start_pos_x: 0.0,
                 end_pos_x: 0.0,
                 duration: 0.0,
                 elapsed: 0.0,
@@ -437,12 +459,12 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
 }
 
 
-fn after_setup_scene( ) {
-  /*  windows: NonSend<WinitWindows>,*/
-/*    for window in windows.windows.values() {
-        window.set_title("Cansa Makina's pipe bend app");
-        window.set_window_icon(Some(load_icon()));
-    }*/
+fn after_setup_scene() {
+    /*  windows: NonSend<WinitWindows>,*/
+    /*    for window in windows.windows.values() {
+            window.set_title("Cansa Makina's pipe bend app");
+            window.set_window_icon(Some(load_icon()));
+        }*/
 }
 
 
@@ -479,9 +501,10 @@ fn update_camera_transform_system(
 }
 
 fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut lines_materials: ResMut<Assets<LineMaterial>>) {
+    let l=100.0;
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(1500.0, 0.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(1.0*l, 0.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::GREEN,
@@ -490,7 +513,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
 
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1500.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1.0*l, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::RED,
@@ -498,7 +521,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
     ));
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1500.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0*l))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::BLUE,
@@ -514,10 +537,12 @@ fn setup_drawings_layer(
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
 ) {
-    let stp: Vec<u8> = Vec::from((include_bytes!("files/1.stp")).as_slice());
+    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+   // load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+    load_mesh_centerline(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
     bend_commands.original_file = stp;
+
 }
 
 fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendCommands>, mut query_meshes: Query<(Entity, &MainPipe)>, mut query_centerlines: Query<(Entity, &PipeCenterLine)>, mut commands: Commands,
@@ -547,7 +572,7 @@ fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendComman
 }
 
 fn on_mouse_button_click(
-    click: Trigger<Pointer<Click>>,
+    click: On<Pointer<Click>>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>)>,
     mut query_pipes: Query<(Entity, &mut MainPipe)>,
@@ -615,19 +640,159 @@ fn animate_simple(
             if animation.elapsed > animation.duration {
                 animation.elapsed = 0.0;
                 animation.duration = 0.0;
-                transform.translation.x=animation.end_pos_x;
-                animation.start_pos_x=transform.translation.x;
+                transform.translation.x = animation.end_pos_x;
+                animation.start_pos_x = transform.translation.x;
                 //animation.start_pos_x = transform.translation.x;
             }
         }
     }
 }
 
-fn smooth_step(t: f32) -> f32 {
-    t * t * (3.0 - 2.0 * t)
+fn test_system(mut commands: Commands,
+               mut meshes: ResMut<Assets<Mesh>>,
+               query_testlines: Query<(Entity, &TestLines)>,
+               mut lines_materials: ResMut<Assets<LineMaterial>>,
+               mut bend_commands: ResMut<BendCommands>,
+               mut query_transform: Query<&mut Transform, With<PipeCenterLine>>,
+
+               /*    mut query_transform: Query<(&mut Transform, &Name, &mut PipeCenterLine)>,*/
+             /*  mut query_transform: Query<(Entity, &PipeCenterLine)>*/
+
+) {
+
+    for (entity, testline) in &query_testlines {
+            commands.entity(entity).despawn();
+    }
+
+
+    let t=bend_commands.t;
+    let lraclr_arr=&bend_commands.straight;
+
+
+    let (pt,xv,yv,zv)=byt(t,lraclr_arr,&bend_commands.up_dir);
+
+    let v0=Vec3::new(pt.x as f32,pt.y as f32,pt.z as f32);
+    let vx=v0+Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32)*100.0;
+    let vy=v0+Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32)*100.0;
+    let vz=v0+Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32)*100.0;
+
+
+
+/*    let source_pos = pt;
+    let source_x = Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32);
+    let source_y = Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32);
+    let source_z = Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32);
+
+
+    let dest_pos = Vec3::new(0.0, 0.0, 0.0);
+    let dest_x = Vec3::X;  // X-axis now points where Y used to
+    let dest_y = Vec3::Y; // Y-axis now points where -X used to
+    let dest_z = Vec3::Z;  // Z-axis is unchanged
+*/
+
+    let dest_pos =-Vec3::new(pt.x as f32, pt.y as f32, pt.z as f32);
+    let source_x = Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32);
+    let source_y = Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32);
+    let source_z = Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32);
+
+
+    let source_pos = Vec3::new(0.0, 0.0, 0.0);
+    let dest_x = Vec3::X;  // X-axis now points where Y used to
+    let dest_y = Vec3::Y; // Y-axis now points where -X used to
+    let dest_z = Vec3::Z;  // Z-axis is unchanged
+
+
+    let m_source = Mat3::from_cols(source_x, source_y, source_z);
+    let m_dest = Mat3::from_cols(dest_x, dest_y, dest_z);
+
+    let rot_matrix = m_dest * m_source.transpose();
+    //let final_transform_matrix = Mat4::from_mat3_translation(rot_matrix, dest_pos);
+
+    let final_transform_matrix =Mat4::from_mat3(rot_matrix)  * Mat4::from_translation(dest_pos);
+
+
+    //let final_transform: Transform = Transform::from_matrix(final_transform_matrix);
+
+    query_transform.iter_mut().for_each(|mut transform| {
+        *transform=Transform::from_matrix(final_transform_matrix);
+        //println!("A {:?}", transform.translation.x);
+    });
+
+
+    {
+        commands.spawn(
+            (
+                Mesh3d(meshes.add(LineList {
+                    lines: vec![(v0, vx)],
+                })),
+                MeshMaterial3d(lines_materials.add(LineMaterial {
+                    color: LinearRgba::rgb(1.0,0.3,0.5),
+                })),
+                Transform::from_matrix(final_transform_matrix),
+                TestLines
+            ));
+
+        commands.spawn((
+            Mesh3d(meshes.add(LineList {
+                lines: vec![(v0, vy)],
+            })),
+            MeshMaterial3d(lines_materials.add(LineMaterial {
+                color: LinearRgba::RED,
+            })),
+            Transform::from_matrix(final_transform_matrix),
+            TestLines
+        ));
+        commands.spawn((
+            Mesh3d(meshes.add(LineList {
+                lines: vec![(v0, vz)],
+            })),
+            MeshMaterial3d(lines_materials.add(LineMaterial {
+                color: LinearRgba::BLUE,
+            })),
+            Transform::from_matrix(final_transform_matrix),
+            TestLines
+        ));
+    }
+
+}
+
+fn tick_timer_system(
+    mut timer: ResMut<TickTimer>,
+    time: Res<Time>,
+    mut event_writer: MessageWriter<TickEvent>,
+) {
+    // Tick the timer with the time that has passed since the last frame
+    timer.0.tick(time.delta());
+
+    // The `just_finished()` method returns true only once per completion
+    if timer.0.just_finished() {
+        // 📨 Send the event
+        event_writer.write(TickEvent);
+       // println!("Sent TickEvent!");
+    }
+}
+
+// This system listens for and reacts to the event
+fn event_listener_system(
+    mut events: MessageReader<TickEvent>,
+    mut bend_commands: ResMut<BendCommands>,
+) {
+    // The .read() method iterates through all events of this type
+    for event in events.read() {
+        if(bend_commands.t>0.0){
+            bend_commands.t-=0.001;
+        }else{
+            bend_commands.t=1.0;
+        }
+
+        //println!("-> 🎧 Received TickEvent: {:?}", event);
+    }
 }
 
 
+fn smooth_step(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
 
 
 fn load_icon() -> Icon {

@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
+use std::ops::{Add, Sub};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -13,7 +14,7 @@ use bevy::log::warn;
 use bevy::math::ops::round;
 use bevy::math::Vec3;
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
-use bevy::prelude::{Mesh, Mesh3d, Resource};
+use bevy::prelude::{Mesh, Mesh3d, Resource, Transform};
 
 use bevy_ecs::change_detection::{Res, ResMut};
 use bevy_ecs::entity::Entity;
@@ -23,14 +24,14 @@ use bevy_editor_cam::prelude::{EditorCam, EnabledMotion};
 use bevy_egui::{egui, EguiContexts};
 use bevy_egui::egui::{Color32, TextStyle};
 use cgmath::num_traits::abs;
-use cgmath::{Deg, Rad, Vector3};
+use cgmath::{Deg, InnerSpace, Point3, Rad, Vector3};
 use chrono::NaiveDate;
 use egui_alignments::center_vertical;
 use rfd::FileDialog;
 use regex::Regex;
 use crate::{on_mouse_button_click, BendCommands, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, SimpleAnimation, VisibilityStore};
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
+use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, tot_pipe_len, AnimState, AnimStatus, LRACLR};
 use crate::algo::{analyze_stp, BendToro, MainCylinder, MainPipe};
 
 pub static STRIGHT_SPEED: AtomicUsize = AtomicUsize::new(100);
@@ -274,6 +275,11 @@ pub fn ui_system(mut contexts: EguiContexts,
                         animation.end_pos_x = 2000.0;
                     }
                 }
+            }
+            ui.separator();
+
+            if ui.button("B").clicked() {
+              bend_commands.t=bend_commands.t-0.005;
             }
             ui.separator();
 
@@ -746,6 +752,136 @@ pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, co
     bend_commands.straight = lraclr_arr.clone();
     bend_commands.anim_state = AnimState::default();
 }
+
+pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>) {
+    let len: f64 = tot_pipe_len(cmnd);
+    let dist = len * t;
+    let mut fragment_len=0.0;
+    //println!("LENGHT {} dist {} fragment_len {}",len,dist,fragment_len);
+    let (circles, tors) = cnc_to_poly(cmnd, up_dir);
+    let indexes=&circles.len() +&tors.len();
+    let mut x_dir=Vector3::new(1.0,0.0,0.0);
+    let mut y_dir=Vector3::new(0.0,1.0,0.0);
+    let mut z_dir=Vector3::new(0.0,0.0,1.0);
+    let mut pt: Point3<f64>=Point3::new(0.0,0.0,0.0);
+    for i in (0..indexes).step_by(2) {
+        match circles.iter().find(|cil|cil.id==i as u64) {
+            None => { println!("Index NF{}",i);}
+            Some(c) => {
+                let  min=fragment_len;
+                fragment_len=fragment_len+c.h;
+                let  max=fragment_len;
+                if(dist>=min && dist<max){
+                    let offset=dist-min;
+                    pt =c.ca.loc+c.ca.dir*offset;
+                    let pt2=c.ca.loc+c.ca.dir*(offset+1.0);
+                    x_dir=pt2.sub(pt);
+                    match  tors.iter().find(|tor| tor.id==(i+1) as u64){
+                        None => {
+                            match  tors.iter().find(|tor| tor.id==(i-1) as u64) {
+                                None => {}
+                                Some(arc) => {
+                                    let pt2=pt+arc.bend_plane_norm.normalize();
+                                    z_dir=pt.sub(pt2);
+                                    y_dir=z_dir.cross(x_dir);
+                                }
+                            }
+
+                        }
+                        Some(arc) => {
+                            let pt2=pt+arc.bend_plane_norm.normalize();
+                            z_dir=pt.sub(pt2);
+                            y_dir=z_dir.cross(x_dir);
+                        }
+                    }
+                }else{
+                    match  tors.iter().find(|tor| tor.id==(i+1) as u64) {
+                        None => { }
+                        Some(arc) => {
+                            let min=fragment_len;
+                            fragment_len=fragment_len+arc.get_len();
+                            let max=fragment_len;
+                            if(dist>=min && dist<max){
+                                let offset=dist-min;
+                                let v1: Vector3<f64> = arc.ca.loc.sub(arc.bend_center_point);
+                                let v2: Vector3<f64> = arc.cb.loc.sub(arc.bend_center_point);
+                                let total_angle: f64 = (v1.dot(v2) / (v1.magnitude() * v2.magnitude())).acos();
+                                let total_arc_length: f64 = total_angle * arc.bend_radius;
+                                let theta = offset / arc.bend_radius;
+                                let axis = v1.cross(v2);
+                                let normalized_axis = axis.normalize();
+                                let v_target = v1 * theta.cos() + normalized_axis.cross(v1) * theta.sin();
+                                pt = arc.bend_center_point.add(v_target);
+                                //println!("ImHere T {} D {} min {} max {} Point {:?}", arc.id,dist,min,max,pt);
+                                let pt2=pt+arc.bend_plane_norm.normalize();
+                                let v3=pt.sub(arc.bend_center_point).normalize();
+                                z_dir=pt.sub(pt2);
+                                y_dir=(pt+v3).sub(pt);
+                                x_dir=y_dir.cross(z_dir);
+                            }
+
+                            //println!("L A {}",fragment_len);
+                            //rintln!("Index {} C {}  T {}", i, c.id, arc.id);
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    (pt,x_dir,y_dir,z_dir)
+
+}
+
+
+pub fn load_mesh_centerline(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands) {
+    //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
+
+    ui_state.update(lraclr_arr);
+    let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
+    let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
+
+    let (circles, tors) = cnc_to_poly(&lraclr_arr, &bend_commands.up_dir);
+
+    let mut counter = 0;
+    for t in tors {
+        let prev_dir = circles[counter].get_dir();
+        let lines = t.to_lines(&prev_dir);
+        dxf_lines_t.extend_from_slice(&lines);
+        counter = counter + 1;
+    }
+
+    for c in circles {
+        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
+        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
+        dxf_lines_c.push((v1, v2));
+    };
+
+
+    commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: dxf_lines_c,
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::rgb(1.0,1.0,0.0),
+        })),
+        Transform::default(),
+        PipeCenterLine
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: dxf_lines_t,
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::rgb(1.0,0.3,0.3),
+        })),
+        Transform::default(),
+        PipeCenterLine
+    ));
+    bend_commands.straight = lraclr_arr.clone();
+    bend_commands.anim_state = AnimState::default();
+}
+
 pub fn load_anim_mesh(circles: Vec<MainCylinder>, tors: Vec<BendToro>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>) {
     let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
     let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
