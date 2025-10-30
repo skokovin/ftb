@@ -4,6 +4,7 @@ use std::f32::consts::PI;
 use std::fs::File;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
+use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::asset::{AssetServer, Assets, Handle};
 use bevy::camera::Viewport;
@@ -14,6 +15,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::light::CascadeShadowConfigBuilder;
+use bevy::math::ops::cos;
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
 use bevy::platform::collections::HashMap;
 use bevy::post_process::bloom::Bloom;
@@ -37,11 +39,14 @@ use cgmath::num_traits::abs;
 use ruststep::itertools::Itertools;
 use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder, MainPipe};
+use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder};
 use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
-use crate::ui::{byt, load_anim_mesh, load_mesh, load_mesh_centerline, reload_mesh, ui_system, UiState, LRAUI};
+use crate::ui::{byt, interpolate_by_t, load_anim_mesh, load_mesh, load_mesh_by_t, load_mesh_centerline, reload_mesh, ui_system, UiState, LRAUI};
 
 use bevy::prelude::*;
+use bevy::render::view::Hdr;
+use is_odd::IsOdd;
+
 mod algo;
 mod ui;
 mod adds;
@@ -52,16 +57,31 @@ pub enum ActiveArea {
 }
 const CAMERA_TARGET: Vec3 = Vec3::new(0., 0., 0.);
 
-#[derive(Event,Message, Debug)] // Using Debug for easy printing
+#[derive(Event, Message, Debug)] // Using Debug for easy printing
 pub struct TickEvent;
 #[derive(Resource)]
 struct TickTimer(Timer);
 
+#[derive(Debug,Component)]
+pub enum MainPipe{
+    Pipe(MainCylinder),
+    Tor(BendToro)
+}
+#[derive(Component, Clone)]
+struct PipeCenterLine;
 #[derive(Component, Clone)]
 struct TestLines;
 
 #[derive(Component, Clone)]
-struct PipeCenterLine;
+struct MeshPipe{
+    t:i64
+}
+#[derive(Component, Clone)]
+struct MeshPipeStright{
+    t:i64
+}
+
+
 #[derive(Resource, Deref, DerefMut)]
 struct OriginalCameraTransform(Transform);
 #[derive(Default, Resource)]
@@ -90,10 +110,34 @@ pub struct BendCommands {
     pub original_file: Vec<u8>,
     pub anim_state: AnimState,
     pub t: f64,
+    pub id: u64,
+    pub direction: f64,
+    pub rot_matrix: Mat3,
+    pub is_paused: bool,
+    pub rot_step: f64,
+    pub rot_angle: f64,
 }
 impl Default for BendCommands {
-    fn default() -> Self { BendCommands { straight: vec![], selected_id: i32::MIN, up_dir: Vector3::new(0.0, 0.0, -1.0), original_file: vec![], anim_state: AnimState::default(), t: 1.0 } }
+    fn default() -> Self {
+        BendCommands {
+            straight: vec![],
+            selected_id: i32::MIN,
+            up_dir: Vector3::new(0.0, 0.0, -1.0),
+            original_file: vec![],
+            anim_state: AnimState::default(),
+            t: 0.0,
+            id: 0,
+            direction: 1.0,
+            rot_matrix: Mat3::default(),
+            is_paused: false,
+            rot_step: 0.0,
+            rot_angle: 0.0,
+        }
+    }
 }
+
+
+
 
 #[derive(Resource)]
 struct SharedMaterials {
@@ -125,21 +169,16 @@ fn main() {
         input_system_settings: Default::default(),
         enable_absorb_bevy_input_system: false,
         enable_cursor_icon_updates: false,
+        enable_ime: false,
     };
 
 
-    App::new()
-        .insert_resource(Time::<Fixed>::from_hz(30.0))
-        .insert_resource(vis_stor).insert_resource(egui_settings)
-        .init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>()
-        .insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() })
-        .add_message::<TickEvent>()
-        // 2. Insert the timer resource
+    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_message::<TickEvent>()
+
         .insert_resource(TickTimer(Timer::new(
-            Duration::from_millis(20),
+            Duration::from_millis(30),
             TimerMode::Repeating, // Make the timer repeat
-        )))
-        .add_plugins((
+        ))).add_plugins((
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Cansa Makina's pipe bend app".to_string(),
@@ -152,17 +191,17 @@ fn main() {
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-    )).add_systems(PreStartup, setup_scene)
-        .add_systems(EguiPrimaryContextPass, (ui_system,))
+
+    ))
+
+        .add_systems(PreStartup, setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,))
         .add_systems(FixedUpdate, animation_system)
 
-/*        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
-        .add_systems(PostStartup, after_setup_scene)
-        .add_systems(Update, (update_camera_transform_system, animate_simple))*/
+        /*        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
+                .add_systems(PostStartup, after_setup_scene)
+                .add_systems(Update, (update_camera_transform_system, animate_simple))*/
 
-        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,setup_machine))
-        .add_systems(PostStartup, after_setup_scene)
-        .add_systems(Update, (tick_timer_system, event_listener_system,update_camera_transform_system,test_system))
+        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,)).add_systems(PostStartup, after_setup_scene).add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
         .run();
 }
 
@@ -190,7 +229,9 @@ fn setup_scene(mut commands: Commands,
         base_color: Color::from(RED_500), // Deep red color
         metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
         perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
-        reflectance: 0.7,                       // How much it reflects its environment
+        reflectance: 0.7,
+
+
         ..default()
     });
     let shm = SharedMaterials {
@@ -239,9 +280,10 @@ fn setup_scene(mut commands: Commands,
             },
             ..Default::default()
         },
-        ScreenSpaceAmbientOcclusion::default(),
-        Smaa::default(),
-        Msaa::Off,
+        //ScreenSpaceAmbientOcclusion::default(),
+       //Smaa::default(),
+       Msaa::Sample4,
+       Hdr,
     ));
     commands.insert_resource(shm);
 }
@@ -501,10 +543,10 @@ fn update_camera_transform_system(
 }
 
 fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut lines_materials: ResMut<Assets<LineMaterial>>) {
-    let l=100.0;
+    let l = 100.0;
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(1.0*l, 0.0, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(1.0 * l, 0.0, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::GREEN,
@@ -513,7 +555,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
 
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1.0*l, 0.0))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1.0 * l, 0.0))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::RED,
@@ -521,7 +563,7 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
     ));
     commands.spawn((
         Mesh3d(meshes.add(LineList {
-            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0*l))],
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0 * l))],
         })),
         MeshMaterial3d(lines_materials.add(LineMaterial {
             color: LinearRgba::BLUE,
@@ -537,12 +579,55 @@ fn setup_drawings_layer(
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
 ) {
+    //let stp: Vec<u8> = Vec::from((include_bytes!("files/6.stp")).as_slice());
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-   // load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+    //let lraclr_arr_rev= reverse_lraclr(&lraclr_arr);
+    //load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+
+    let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
+
+
+    meshes_t.into_iter().for_each(|(m, t,id)| {
+        if(id.is_odd()){
+            let handle: Handle<Mesh> = meshes.add(m);
+            let entity: Entity = commands.spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(shared_materials.red_matl.clone()),
+                MeshPipe{
+                    t,
+                },
+                Transform::default(),
+            )).observe(on_mouse_button_click).id();
+        }else{
+            let handle: Handle<Mesh> = meshes.add(m);
+            let entity: Entity = commands.spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(shared_materials.hover_matl.clone()),
+                MeshPipe{
+                    t,
+                },
+                Transform::default(),
+            )).observe(on_mouse_button_click).id();
+        }
+    });
+
+
+    meshes_m_t.into_iter().for_each(|(m, t,id)| {
+            let handle: Handle<Mesh> = meshes.add(m);
+            let entity: Entity = commands.spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(shared_materials.white_matl.clone()),
+                MeshPipeStright{
+                    t,
+                },
+                Transform::default(),
+            )).observe(on_mouse_button_click).id();
+    });
+
+    //load_mesh_by_t(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
     load_mesh_centerline(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
     bend_commands.original_file = stp;
-
 }
 
 fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendCommands>, mut query_meshes: Query<(Entity, &MainPipe)>, mut query_centerlines: Query<(Entity, &PipeCenterLine)>, mut commands: Commands,
@@ -648,119 +733,9 @@ fn animate_simple(
     }
 }
 
-fn test_system(mut commands: Commands,
-               mut meshes: ResMut<Assets<Mesh>>,
-               query_testlines: Query<(Entity, &TestLines)>,
-               mut lines_materials: ResMut<Assets<LineMaterial>>,
-               mut bend_commands: ResMut<BendCommands>,
-               mut query_transform: Query<&mut Transform, With<PipeCenterLine>>,
-
-               /*    mut query_transform: Query<(&mut Transform, &Name, &mut PipeCenterLine)>,*/
-             /*  mut query_transform: Query<(Entity, &PipeCenterLine)>*/
-
-) {
-
-    for (entity, testline) in &query_testlines {
-            commands.entity(entity).despawn();
-    }
 
 
-    let t=bend_commands.t;
-    let lraclr_arr=&bend_commands.straight;
-
-
-    let (pt,xv,yv,zv)=byt(t,lraclr_arr,&bend_commands.up_dir);
-
-    let v0=Vec3::new(pt.x as f32,pt.y as f32,pt.z as f32);
-    let vx=v0+Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32)*100.0;
-    let vy=v0+Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32)*100.0;
-    let vz=v0+Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32)*100.0;
-
-
-
-/*    let source_pos = pt;
-    let source_x = Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32);
-    let source_y = Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32);
-    let source_z = Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32);
-
-
-    let dest_pos = Vec3::new(0.0, 0.0, 0.0);
-    let dest_x = Vec3::X;  // X-axis now points where Y used to
-    let dest_y = Vec3::Y; // Y-axis now points where -X used to
-    let dest_z = Vec3::Z;  // Z-axis is unchanged
-*/
-
-    let dest_pos =-Vec3::new(pt.x as f32, pt.y as f32, pt.z as f32);
-    let source_x = Vec3::new(xv.x as f32,xv.y as f32,xv.z as f32);
-    let source_y = Vec3::new(yv.x as f32,yv.y as f32,yv.z as f32);
-    let source_z = Vec3::new(zv.x as f32,zv.y as f32,zv.z as f32);
-
-
-    let source_pos = Vec3::new(0.0, 0.0, 0.0);
-    let dest_x = Vec3::X;  // X-axis now points where Y used to
-    let dest_y = Vec3::Y; // Y-axis now points where -X used to
-    let dest_z = Vec3::Z;  // Z-axis is unchanged
-
-
-    let m_source = Mat3::from_cols(source_x, source_y, source_z);
-    let m_dest = Mat3::from_cols(dest_x, dest_y, dest_z);
-
-    let rot_matrix = m_dest * m_source.transpose();
-    //let final_transform_matrix = Mat4::from_mat3_translation(rot_matrix, dest_pos);
-
-    let final_transform_matrix =Mat4::from_mat3(rot_matrix)  * Mat4::from_translation(dest_pos);
-
-
-    //let final_transform: Transform = Transform::from_matrix(final_transform_matrix);
-
-    query_transform.iter_mut().for_each(|mut transform| {
-        *transform=Transform::from_matrix(final_transform_matrix);
-        //println!("A {:?}", transform.translation.x);
-    });
-
-
-    {
-        commands.spawn(
-            (
-                Mesh3d(meshes.add(LineList {
-                    lines: vec![(v0, vx)],
-                })),
-                MeshMaterial3d(lines_materials.add(LineMaterial {
-                    color: LinearRgba::rgb(1.0,0.3,0.5),
-                })),
-                Transform::from_matrix(final_transform_matrix),
-                TestLines
-            ));
-
-        commands.spawn((
-            Mesh3d(meshes.add(LineList {
-                lines: vec![(v0, vy)],
-            })),
-            MeshMaterial3d(lines_materials.add(LineMaterial {
-                color: LinearRgba::RED,
-            })),
-            Transform::from_matrix(final_transform_matrix),
-            TestLines
-        ));
-        commands.spawn((
-            Mesh3d(meshes.add(LineList {
-                lines: vec![(v0, vz)],
-            })),
-            MeshMaterial3d(lines_materials.add(LineMaterial {
-                color: LinearRgba::BLUE,
-            })),
-            Transform::from_matrix(final_transform_matrix),
-            TestLines
-        ));
-    }
-
-}
-
-fn tick_timer_system(
-    mut timer: ResMut<TickTimer>,
-    time: Res<Time>,
-    mut event_writer: MessageWriter<TickEvent>,
-) {
+fn tick_timer_system(mut timer: ResMut<TickTimer>, time: Res<Time>, mut event_writer: MessageWriter<TickEvent>) {
     // Tick the timer with the time that has passed since the last frame
     timer.0.tick(time.delta());
 
@@ -768,24 +743,148 @@ fn tick_timer_system(
     if timer.0.just_finished() {
         // 📨 Send the event
         event_writer.write(TickEvent);
-       // println!("Sent TickEvent!");
+        // println!("Sent TickEvent!");
     }
 }
 
-// This system listens for and reacts to the event
 fn event_listener_system(
     mut events: MessageReader<TickEvent>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    query_testlines: Query<(Entity, &TestLines)>,
+    mut lines_materials: ResMut<Assets<LineMaterial>>,
     mut bend_commands: ResMut<BendCommands>,
+    mut query_transform_main_pipe: Query<(&mut Transform, Option<&MeshPipe>, Option<&PipeCenterLine>, Option<&MeshPipeStright>),Or<(With<MeshPipe>, With<PipeCenterLine>, With<MeshPipeStright>)>>,
+
+    mut query_visibility: Query<(&mut Visibility,Option<&MeshPipe>, Option<&MeshPipeStright>)>,
+
 ) {
     // The .read() method iterates through all events of this type
     for event in events.read() {
-        if(bend_commands.t>0.0){
-            bend_commands.t-=0.001;
-        }else{
-            bend_commands.t=1.0;
+        let delta_rot: f64 = 1.0;
+
+        let lraclr_arr = &bend_commands.straight;
+        let (pt, xv, yv, zv, rot_deg, id,cp,l) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
+        let dx = bend_commands.t*l;
+
+
+        bend_commands.id = id;
+        if (!bend_commands.id.is_odd()) {
+            bend_commands.rot_angle = rot_deg;
+            bend_commands.rot_step = -bend_commands.rot_angle;
+        } else {
+            if (bend_commands.rot_angle != 0.0) {
+                bend_commands.is_paused = true;
+                bend_commands.rot_step = bend_commands.rot_step + delta_rot * bend_commands.rot_angle.signum() ;
+                if (bend_commands.rot_angle.signum() == bend_commands.rot_step.signum()) {
+                    bend_commands.is_paused = false;
+                    bend_commands.rot_step = 0.0;
+                }
+            }
         }
 
-        //println!("-> 🎧 Received TickEvent: {:?}", event);
+
+        if (bend_commands.t < 0.0 || bend_commands.t > 1.0) {
+            bend_commands.direction = bend_commands.direction * -1.0;
+            //bend_commands.is_paused=true;
+        }
+        if (!bend_commands.is_paused) {
+            bend_commands.t += 0.001 * bend_commands.direction;
+        }
+
+
+
+
+        let mut x_rotation = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, bend_commands.rot_step.to_radians().cos() as f32, -bend_commands.rot_step.to_radians().sin() as f32),
+            Vec3::new(0.0, bend_commands.rot_step.to_radians().sin() as f32, bend_commands.rot_step.to_radians().cos() as f32),
+        );
+
+        let dest_pos = -Vec3::new(pt.x as f32, pt.y as f32, pt.z as f32);
+        let source_x = Vec3::new(xv.x as f32, xv.y as f32, xv.z as f32);
+        let source_y = Vec3::new(yv.x as f32, yv.y as f32, yv.z as f32);
+        let source_z = Vec3::new(zv.x as f32, zv.y as f32, zv.z as f32);
+
+        let dest_x = Vec3::X;  // X-axis now points where Y used to
+        let dest_y = Vec3::Y; // Y-axis now points where -X used to
+        let dest_z = Vec3::Z;  // Z-axis is unchanged
+
+
+        let m_source = Mat3::from_cols(source_x, source_y, source_z);
+        let m_dest = Mat3::from_cols(dest_x, dest_y, dest_z);
+
+        let z_mirror = Mat3::from_cols(
+            Vec3::new(-1.0, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+
+        let x_mirror = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        );
+
+        let rot_matrix: Mat3 = x_rotation * x_mirror * z_mirror * m_dest * m_source.transpose();
+        let final_transform_matrix = Mat4::from_mat3(rot_matrix) * Mat4::from_translation(dest_pos);
+
+        query_transform_main_pipe.iter_mut().for_each(|(mut transform, mesh_pipe, pipe_center_line, mesh_pipe_stright)| {
+           match mesh_pipe {
+               None => {}
+               Some(_) => {
+                   *transform = Transform::from_matrix(final_transform_matrix);
+               }
+           }
+
+            match pipe_center_line {
+                None => {}
+                Some(_) => {
+                    *transform = Transform::from_matrix(final_transform_matrix);
+                }
+            }
+
+            match mesh_pipe_stright {
+                None => {}
+                Some(_) => {
+                    transform.translation.x = dx as f32;
+                }
+            }
+
+
+        });
+
+
+
+        // 2. Iterate over the query results
+        for (mut visibility, pipe, mesh_pipe_stright) in query_visibility.iter_mut() {
+
+            match pipe{
+                None => {}
+                Some(p) => {
+                    if(p.t> (bend_commands.t*1000.0) as i64 ){
+                        *visibility = Visibility::Hidden;
+                    }else{
+                        *visibility = Visibility::Visible;
+                    }
+                }
+            }
+
+            match mesh_pipe_stright{
+                None => {}
+                Some(p) => {
+                    if(p.t< (bend_commands.t*1000.0) as i64 ){
+                        *visibility = Visibility::Hidden;
+                    }else{
+                        *visibility = Visibility::Visible;
+                    }
+                }
+            }
+
+
+
+        }
+
     }
 }
 

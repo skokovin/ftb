@@ -151,6 +151,16 @@ impl LRACLR {
         abs(Rad::from(Deg(self.a)).0) * (self.clr)
     }
 
+    pub fn rotate_by_id(id:i32,cmnd: &Vec<LRACLR>)->f64{
+        let mut ret:f64=0.0;
+       match cmnd.iter().find(|cmd| {cmd.id1==id || cmd.id2==id}) {
+           None => {}
+           Some(v) => {
+               ret=v.r;
+           }
+       };
+        ret
+    }
 
 }
 impl Display for LRACLR {
@@ -184,6 +194,7 @@ fn generate_cyl(id: u64, h: f64, radius: f64) -> MainCylinder {
         ca_tor: u64::MAX,
         cb_tor: u64::MAX,
 
+        t: -1,
     };
     mc
 }
@@ -223,10 +234,10 @@ fn generate_cyl_by_2pts(id: u64, sp: Point3, ep: Point3, radius: f64, fwd_dir: V
         ca_tor: u64::MAX,
         cb_tor: u64::MAX,
 
+        t: -1,
     };
     mc
 }
-
 pub fn gen_cyl(sp: Point3, ep: Point3, radius: f64) -> MainCylinder {
     let dir = ep.sub(sp).normalize();
     let radius_dir = perpendicular_rand_dir(&dir).normalize();
@@ -373,6 +384,7 @@ fn generate_tor_by_2pts(id: u64, sp: Point3, ep: Point3, radius: f64, fwd_dir_s:
         },
         r_gr_id: (round_by_dec(radius, 5) * DIVIDER) as u64,
 
+        t: -1,
     };
 
     tor
@@ -388,7 +400,6 @@ pub fn optimize_lraclr(lraclrs: &mut Vec<LRACLR>) {
         }
     });
 }
-
 pub fn all_to_stp(cyls: &Vec<MainCylinder>, tors: &Vec<BendToro>) -> Vec<u8> {
     use truck_modeling::*;
     let mut shells: Vec<truck_topology::Shell<Point3, Curve, Surface>> = vec![];
@@ -424,7 +435,6 @@ pub fn all_to_stp(cyls: &Vec<MainCylinder>, tors: &Vec<BendToro>) -> Vec<u8> {
     let _ = ruststep::parser::parse(&step_string).unwrap();
     step_file
 }
-
 
 pub fn cnc_to_poly_animate(bc: &mut BendCommands) -> (Vec<MainCylinder>, Vec<BendToro>) {
     let mut out_cyls: Vec<MainCylinder> = vec![];
@@ -650,238 +660,4 @@ pub fn cnc_to_poly_animate(bc: &mut BendCommands) -> (Vec<MainCylinder>, Vec<Ben
     }
     (c, t)
 }
-
-
-/*pub fn cnc_to_poly_animate_old(lraclr_arr: &Vec<LRACLR>, anim_state: &AnimState, v_up_orign: &Vector3, dt: f64) -> (Vec<MainCylinder>, Vec<BendToro>, AnimState) {
-    let mut out_cyls: Vec<MainCylinder> = vec![];
-    let mut out_tors: Vec<BendToro> = vec![];
-
-    let incr_l = STRIGHT_SPEED.load(Ordering::Relaxed) as f64 * dt;
-    let incr_r = ROTATE_SPEED.load(Ordering::Relaxed) as f64 * dt;
-    let incr_a = ANGLE_SPEED.load(Ordering::Relaxed) as f64 * dt;
-    let last_index = lraclr_arr.len() - 1;
-    let id = anim_state.id;
-    let op_counter = anim_state.op_counter;
-    let stright_len: f64 = {
-        if (id == 0 && anim_state.stright_len == 0.0) {
-            tot_pipe_len(&lraclr_arr)
-        } else {
-            anim_state.stright_len
-        }
-    };
-
-    let mut anim_lra: Vec<LRACLR> = vec![];
-    println!("id {:?} op_counter {:?}  anim_state {:?}" ,id ,op_counter,anim_state);
-    let (c,t,mut a)={
-        if (!id.is_odd()) {
-            let indx = (id / 2) as usize;
-            if (indx > last_index) {
-                (out_cyls, out_tors, AnimState::new(0, 4, 0.0, 0.0, LRACLR::default(), op_counter,dt),)
-            }
-            else {
-                let curr: &LRACLR = &lraclr_arr[indx as usize];
-                let curr_l = curr.l;
-                let curr_r = curr.r;
-                //warn!("curr_l {:?} curr_r {:?}",curr_l,curr_r);
-                match anim_state.opcode {
-                    0 => {
-                        let next_val = anim_state.value + incr_l;
-                        if (next_val >= curr_l) {
-                            let mut next_stage: AnimState = AnimState::new(id, 1, 0.0, stright_len - (next_val - curr_l), curr.clone(), op_counter + 1,dt);
-                            lraclr_arr.iter().take(indx + 1).for_each(|lr| { anim_lra.push(lr.clone()); });
-                            if (anim_lra.len() == 1) {
-                                let cyl = generate_cyl(0, anim_lra[0].l, anim_lra[0].pipe_radius);
-                                out_cyls.push(cyl);
-                            } else {
-                                let reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-                                let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                                out_cyls = cyls;
-                                out_tors = tors;
-                            }
-                            //warn!("last len stage id {:?}  {:?} of {:?}",id, next_stage,curr_l);
-                            if (next_stage.stright_len > 0.0) {
-                                out_cyls.push(generate_dummy_cyl(
-                                    out_cyls.last().unwrap().id + 1,
-                                    next_stage.stright_len,
-                                    curr.pipe_radius,
-                                ));
-                            }
-                            (out_cyls, out_tors, next_stage)
-                        } else {
-                            let mut anim_lra: Vec<LRACLR> = vec![];
-                            let next_stage: AnimState = AnimState::new(id, 0, next_val, stright_len - incr_l, curr.clone(), op_counter,dt);
-                            lraclr_arr.iter().take(indx + 1).for_each(|lr| { anim_lra.push(lr.clone()); });
-                            anim_lra[indx].l = next_stage.value;
-
-                            if (anim_lra.len() == 1) {
-                                let cyl = generate_cyl(0, anim_lra[0].l, anim_lra[0].pipe_radius);
-                                out_cyls.push(cyl);
-                            } else {
-                                let reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-                                let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                                out_cyls = cyls;
-                                out_tors = tors;
-                            }
-                            //warn!("len stage id {:?}  {:?} of {:?}",id,next_stage,curr_l);
-                            if (next_stage.stright_len > 0.0) {
-                                out_cyls.push(generate_dummy_cyl(
-                                    out_cyls.last().unwrap().id + 1,
-                                    next_stage.stright_len,
-                                    curr.pipe_radius,
-                                ));
-                            }
-                            (out_cyls, out_tors, next_stage)
-                        }
-                    }
-                    1 => {
-                        let next_val = anim_state.value + incr_r * signum(curr_r);
-                        if (abs(next_val) >= abs(curr_r)) {
-                            let mut next_stage: AnimState = AnimState::new(
-                                id + 1,
-                                2,
-                                0.0,
-                                stright_len,
-                                curr.clone(),
-                                op_counter + 1,
-                                dt
-                            );
-                            lraclr_arr.iter().take(indx + 1).for_each(|lr| {
-                                anim_lra.push(lr.clone());
-                            });
-                            let mut reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-                            reversed[0].r = curr_r;
-                            let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                            out_cyls = cyls;
-                            out_tors = tors;
-                            //warn!("last rot stage id {:?}  {:?} of {:?}",id,next_stage,curr_r);
-                            if (next_stage.stright_len > 0.0) {
-                                out_cyls.push(generate_dummy_cyl(
-                                    out_cyls.last().unwrap().id + 1,
-                                    next_stage.stright_len,
-                                    curr.pipe_radius,
-                                ));
-                            }
-                            (out_cyls, out_tors, next_stage)
-                        } else {
-                            let next_stage: AnimState = AnimState::new(id, 1, next_val, stright_len, curr.clone(), op_counter,dt);
-                            lraclr_arr.iter().take(indx + 1).for_each(|lr| {
-                                anim_lra.push(lr.clone());
-                            });
-
-                            let mut reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-                            reversed[0].r = next_stage.value;
-                            let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                            out_cyls = cyls;
-                            out_tors = tors;
-
-                            //warn!("rot stage id {:?}  {:?} of {:?}",id,next_stage,curr_r);
-                            if (next_stage.stright_len > 0.0) {
-                                out_cyls.push(generate_dummy_cyl(
-                                    out_cyls.last().unwrap().id + 1,
-                                    next_stage.stright_len,
-                                    curr.pipe_radius,
-                                ));
-                            }
-                            (out_cyls, out_tors, next_stage)
-                        }
-                    }
-                    _ => (
-                        out_cyls,
-                        out_tors,
-                        AnimState::new(
-                            anim_state.id,
-                            anim_state.opcode,
-                            anim_state.value,
-                            anim_state.stright_len,
-                            curr.clone(),
-                            op_counter,dt
-                        ),
-                    ),
-                }
-            }
-        }
-        else {
-            let indx = ((id - 1) / 2) as usize;
-
-            let curr = &lraclr_arr[indx];
-            let curr_a = curr.a;
-            let next_val = anim_state.value + incr_a;
-
-            if (next_val >= curr_a) {
-                let len_angle = Rad::from(Deg(next_val - curr_a)).0 * curr.clr;
-                let mut next_stage: AnimState = AnimState::new(
-                    id + 1,
-                    0,
-                    0.0,
-                    stright_len - len_angle,
-                    curr.clone(),
-                    op_counter + 1,dt
-                );
-                lraclr_arr.iter().take(indx + 1).for_each(|lr| {
-                    anim_lra.push(lr.clone());
-                });
-                let mut dumb: LRACLR = lraclr_arr.last().unwrap().clone();
-                dumb.l = 0.5;
-                anim_lra.push(dumb);
-
-                let reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-
-                let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                out_cyls = cyls;
-                out_tors = tors;
-
-                if (next_stage.stright_len > 0.0) {
-                    out_cyls.push(generate_dummy_cyl(
-                        out_cyls.last().unwrap().id + 1,
-                        next_stage.stright_len,
-                        curr.pipe_radius,
-                    ));
-                }
-
-                (out_cyls, out_tors, next_stage)
-            } else {
-                let len_angle = Rad::from(Deg(incr_a)).0 * curr.clr;
-                let next_stage: AnimState = AnimState::new(
-                    id,
-                    2,
-                    next_val,
-                    stright_len - len_angle,
-                    curr.clone(),
-                    op_counter,dt
-                );
-                //warn!("len_angle {:?} incr_a {:?} ",len_angle,incr_a);
-
-                lraclr_arr.iter().take(indx + 1).for_each(|lr| {
-                    anim_lra.push(lr.clone());
-                });
-
-                let mut dumb: LRACLR = lraclr_arr.last().unwrap().clone();
-                dumb.l = 0.5;
-                anim_lra.push(dumb);
-                let mut reversed: Vec<LRACLR> = reverse_lraclr(&anim_lra);
-                reversed[0].a = next_stage.value;
-
-                let (cyls, tors): (Vec<MainCylinder>, Vec<BendToro>) = cnc_to_poly(&reversed, &v_up_orign);
-                out_cyls = cyls;
-                out_tors = tors;
-                if (next_stage.stright_len > 0.0) {
-                    out_cyls.push(generate_dummy_cyl(
-                        out_cyls.last().unwrap().id + 1,
-                        next_stage.stright_len,
-                        curr.pipe_radius,
-                    ));
-                }
-                (out_cyls, out_tors, next_stage)
-            }
-        }
-    };
-
-
-    if(a.opcode == 5) {
-        a.opcode=0;
-    }
-    (c,t,a)
-
-}*/
-
 
