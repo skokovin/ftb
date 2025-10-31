@@ -27,11 +27,11 @@ use bevy_egui::egui::{Color32, TextStyle};
 use cgmath::num_traits::abs;
 use cgmath::{Deg, InnerSpace, Point3, Rad, Vector3};
 use chrono::NaiveDate;
-use egui_alignments::center_vertical;
+use image::EncodableLayout;
 use is_odd::IsOdd;
 use rfd::FileDialog;
 use regex::Regex;
-use crate::{on_mouse_button_click, BendCommands, MainPipe, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, SimpleAnimation, VisibilityStore};
+use crate::{on_mouse_button_click, BendCommands, MainPipe, MeshPipe, MeshPipeStright, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, SimpleAnimation, VisibilityStore};
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::cnc::{all_to_stp, cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, tot_pipe_len, AnimState, AnimStatus, LRACLR};
 use crate::algo::{analyze_stp, triangulate_cylinder, BendToro, MainCylinder};
@@ -52,7 +52,7 @@ impl UiState {
         let (len, pipe_d) = LRACLR::total_len_out_d(v);
         self.lrauis = vec![];
         self.total_length = ((len) as i32).to_string();
-        self.pipe_diameter = ((pipe_d) as i32).to_string();
+        self.pipe_diameter =format!("{:.2}", pipe_d);
         v.iter().for_each(|lraclr| {
             let item = LRAUI::fromlra(lraclr);
             self.lrauis.push(item);
@@ -118,7 +118,8 @@ pub fn ui_system(mut contexts: EguiContexts,
                  mut visibility_store: ResMut<VisibilityStore>,
                  mut bend_commands: ResMut<BendCommands>,
                  mut query_pipes: Query<(&mut MeshMaterial3d<StandardMaterial>, &MainPipe)>,
-                 mut query_meshes: Query<(Entity, &MainPipe)>,
+                 mut query_meshes_stright: Query<(Entity, &MeshPipeStright)>,
+                 mut query_meshes: Query<(Entity, &MeshPipe)>,
                  mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
                  shared_materials: Res<SharedMaterials>,
                  mut meshes: ResMut<Assets<Mesh>>,
@@ -126,10 +127,25 @@ pub fn ui_system(mut contexts: EguiContexts,
                  mut lines_materials: ResMut<Assets<LineMaterial>>,
 ) {
     let ctx = contexts.ctx_mut().expect("REASON");
-    //let mut anim_key:f32=10.0;
+    egui_material_icons::initialize(ctx);
+
     let mut is_cam_fixed = false;
 
+
     egui::TopBottomPanel::top("my_panel").show(ctx, |ui| {
+
+        let eye_icon = if bend_commands.is_machine_visible {
+            egui_material_icons::icons::ICON_DRY // Open Eye
+        } else {
+            egui_material_icons::icons::ICON_DO_NOT_TOUCH // Closed Eye (See-No-Evil)
+        };
+        let centerline_eye_icon = if bend_commands.is_centerline_visible {
+            egui_material_icons::icons::ICON_CYCLONE // Open Eye
+        } else {
+            egui_material_icons::icons::ICON_DESELECT // Closed Eye (See-No-Evil)
+        };
+
+
         if (!is_cam_fixed) { is_cam_fixed = ui.rect_contains_pointer(ui.max_rect()); }
         ui.horizontal_wrapped(|ui| {
             if ui.button("File").clicked() {
@@ -138,6 +154,9 @@ pub fn ui_system(mut contexts: EguiContexts,
                         match fs::read(path) {
                             Ok(stp) => {
                                 for (entity, _) in &mut query_meshes {
+                                    commands.entity(entity).despawn();
+                                }
+                                for (entity, _) in &mut query_meshes_stright {
                                     commands.entity(entity).despawn();
                                 }
                                 for (entity, _) in &mut query_centerlines {
@@ -159,17 +178,15 @@ pub fn ui_system(mut contexts: EguiContexts,
                 for (entity, _) in &mut query_meshes {
                     commands.entity(entity).despawn();
                 }
+                for (entity, _) in &mut query_meshes_stright {
+                    commands.entity(entity).despawn();
+                }
                 for (entity, _) in &mut query_centerlines {
                     commands.entity(entity).despawn();
                 }
                 let lraclr_arr = reverse_lraclr(&bend_commands.straight);
                 load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
                 //bend_commands.straight = lraclr_arr;
-            };
-            ui.separator();
-
-            if ui.button("Simulate").clicked() {
-                bend_commands.anim_state.status = AnimStatus::Enabled;
             };
             ui.separator();
 
@@ -180,6 +197,15 @@ pub fn ui_system(mut contexts: EguiContexts,
                 }
             }
             ui.separator();
+
+            if ui.button("STP").clicked() {
+                if let Some(path) = FileDialog::new().add_filter("STP", &["stp"]).set_directory("/").save_file() {
+                    save_stp(&bend_commands, &path);
+                    println!("{:?}", path);
+                }
+            }
+            ui.separator();
+
             ui.menu_button("Demos", |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 let mut stp: Vec<u8> = vec![];
@@ -255,35 +281,52 @@ pub fn ui_system(mut contexts: EguiContexts,
                 };
 
                 if (!stp.is_empty()) {
+
+
+                    println!("DESPAWN query_meshes {:?}",query_meshes.iter().len());
+                    println!("DESPAWN query_meshes_stright {:?}",query_meshes_stright.iter().len());
+                    println!("DESPAWN query_centerlines {:?}",query_centerlines.iter().len());
                     for (entity, _) in &mut query_meshes {
                         commands.entity(entity).despawn();
+
+                    }
+                    for (entity, _) in &mut query_meshes_stright {
+                        commands.entity(entity).despawn();
+
                     }
                     for (entity, _) in &mut query_centerlines {
                         commands.entity(entity).despawn();
                     }
+
                     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
                     //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
                     load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-                    //bend_commands.straight = lraclr_arr;
+                    bend_commands.straight = lraclr_arr;
                     bend_commands.original_file = stp;
                 }
             });
             ui.separator();
 
-            if ui.button("A").clicked() {
+            if ui.button(eye_icon).clicked() {
 
-                for (name, mut animation) in &mut query {
-                    if (name.as_str() == "pens") {
-                        animation.duration = 3.0;
-                        animation.end_pos_x = 2000.0;
-                    }
+                if (bend_commands.is_machine_visible){
+                    bend_commands.is_machine_visible = false;
+                }else{
+                    bend_commands.is_machine_visible = true;
                 }
+
             }
             ui.separator();
 
-            if ui.button("B").clicked() {
-              bend_commands.t=bend_commands.t-0.005;
+            if ui.button(centerline_eye_icon).clicked() {
+                if (bend_commands.is_centerline_visible){
+                    bend_commands.is_centerline_visible = false;
+                }else{
+                    bend_commands.is_centerline_visible = true;
+                }
             }
+
+
             ui.separator();
 
 
@@ -299,13 +342,16 @@ pub fn ui_system(mut contexts: EguiContexts,
                 for (entity, _) in &mut query_meshes {
                     commands.entity(entity).despawn();
                 }
+                for (entity, _) in &mut query_meshes_stright {
+                    commands.entity(entity).despawn();
+                }
                 for (entity, _) in &mut query_centerlines {
                     commands.entity(entity).despawn();
                 }
                 let lraclr_arr: Vec<LRACLR> = analyze_stp(&bend_commands.original_file);
                 //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
                 load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-                //bend_commands.straight = lraclr_arr;
+                bend_commands.straight = lraclr_arr;
 
             };
         });
@@ -317,7 +363,6 @@ pub fn ui_system(mut contexts: EguiContexts,
         let col_width = 50.0;
         let col_heigth = 8.0;
         let mut new_diameter = f64::MAX;
-
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -368,17 +413,6 @@ pub fn ui_system(mut contexts: EguiContexts,
                     AnimStatus::Finished => { i32::MAX }
                 }
             };
-            let mut opcode_id: i32 = {
-                match bend_commands.anim_state.status {
-                    AnimStatus::Enabled => {
-                        println!("opcode_id: {}", bend_commands.anim_state.opcode as i32);
-                        bend_commands.anim_state.opcode as i32
-                    }
-                    AnimStatus::Disabled => { i32::MAX }
-                    AnimStatus::Finished => { i32::MAX }
-                }
-            };
-
 
             let mut is_changed = false;
 
@@ -390,78 +424,24 @@ pub fn ui_system(mut contexts: EguiContexts,
             for lra_item in &mut ui_state.lrauis {
                 let color_white: Color32 = egui::Color32::from_rgb(255, 255, 255);
                 let color_l: Color32 = {
-                    match bend_commands.anim_state.status {
-                        AnimStatus::Enabled => {
-                            if (lra_item.id1 == bend_commands.selected_id && opcode_id == 0) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Disabled => {
-                            if (lra_item.id1 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Finished => {
-                            if (lra_item.id1 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
+                    if (lra_item.id1 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
                     }
                 };
                 let color_r: Color32 = {
-                    match bend_commands.anim_state.status {
-                        AnimStatus::Enabled => {
-                            if (lra_item.id1 == bend_commands.selected_id && opcode_id == 1) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Disabled => {
-                            if (lra_item.id1 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Finished => {
-                            if (lra_item.id1 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
+                    if (lra_item.id2 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
                     }
                 };
                 let color_a: Color32 = {
-                    match bend_commands.anim_state.status {
-                        AnimStatus::Enabled => {
-                            if (lra_item.id2 == bend_commands.selected_id && opcode_id == 2) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Disabled => {
-                            if (lra_item.id2 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
-                        AnimStatus::Finished => {
-                            if (lra_item.id2 == bend_commands.selected_id) {
-                                egui::Color32::from_rgb(255, 0, 0)
-                            } else {
-                                egui::Color32::from_rgb(255, 255, 255)
-                            }
-                        }
+                    if (lra_item.id2 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
                     }
                 };
 
@@ -555,6 +535,9 @@ pub fn ui_system(mut contexts: EguiContexts,
                 for (entity, _) in &mut query_meshes {
                     commands.entity(entity).despawn();
                 }
+                for (entity, _) in &mut query_meshes_stright {
+                    commands.entity(entity).despawn();
+                }
                 for (entity, _) in &mut query_centerlines {
                     commands.entity(entity).despawn();
                 }
@@ -565,6 +548,9 @@ pub fn ui_system(mut contexts: EguiContexts,
 
             if (deleted_index != 0) {
                 for (entity, _) in &mut query_meshes {
+                    commands.entity(entity).despawn();
+                }
+                for (entity, _) in &mut query_meshes_stright {
                     commands.entity(entity).despawn();
                 }
                 for (entity, _) in &mut query_centerlines {
@@ -578,6 +564,9 @@ pub fn ui_system(mut contexts: EguiContexts,
 
             if (add_index != -1) {
                 for (entity, _) in &mut query_meshes {
+                    commands.entity(entity).despawn();
+                }
+                for (entity, _) in &mut query_meshes_stright {
                     commands.entity(entity).despawn();
                 }
                 for (entity, _) in &mut query_centerlines {
@@ -601,15 +590,63 @@ pub fn ui_system(mut contexts: EguiContexts,
             for (entity, _) in &mut query_meshes {
                 commands.entity(entity).despawn();
             }
+            for (entity, _) in &mut query_meshes_stright {
+                commands.entity(entity).despawn();
+            }
             for (entity, _) in &mut query_centerlines {
                 commands.entity(entity).despawn();
             }
-
             ui_state.update(&new_lra);
             load_mesh(&new_lra, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
             bend_commands.straight = new_lra;
         }
         ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
+    }).response.rect.width();
+
+    occupied_screen_space.bottom =egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+        let icon = if bend_commands.is_paused {
+            egui_material_icons::icons::ICON_PLAY_ARROW
+        } else {
+            egui_material_icons::icons::ICON_PAUSE
+        };
+
+        let pipe_len=tot_pipe_len(&bend_commands.straight);
+        if (!is_cam_fixed) { is_cam_fixed = ui.rect_contains_pointer(ui.max_rect()); }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+
+            if ui.button(egui_material_icons::icons::ICON_FAST_FORWARD).clicked() {
+                if(bend_commands.is_paused){
+                    bend_commands.t=bend_commands.t+0.001;
+                    if(bend_commands.t>1.0){
+                        bend_commands.t=1.0;
+                    }
+                }
+            }
+            if ui.button(icon).clicked() {
+                if(bend_commands.is_paused){
+                    bend_commands.is_paused=false;
+                }else{
+                    bend_commands.is_paused=true;
+                }
+            }
+            if ui.button(egui_material_icons::icons::ICON_FAST_REWIND).clicked() {
+                if(bend_commands.is_paused){
+                    bend_commands.t=bend_commands.t-0.001;
+                    if(bend_commands.t<0.0){
+                        bend_commands.t=0.0;
+                    }
+
+                }
+            }
+
+            ui.style_mut().spacing.slider_width = ui.available_width() - 70.0;
+
+            ui.add(
+                egui::Slider::new(&mut bend_commands.t, 0.0..=1.0).custom_formatter(|value, _range| {
+                    format!("{:.0}", value * pipe_len  )
+                }),
+            );
+        });
     }).response.rect.width();
 
 
@@ -629,308 +666,52 @@ pub fn ui_system(mut contexts: EguiContexts,
         };
     };
 }
-pub fn reload_mesh(meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands) {
-    //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-    bend_commands.straight = reverse_lraclr(&bend_commands.straight);
-    ui_state.update(&bend_commands.straight);
-    let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
-    let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
-    let (circles, tors) = cnc_to_poly(&bend_commands.straight, &bend_commands.up_dir);
-    let mut counter = 0;
-    for t in tors {
-        let prev_dir = circles[counter].get_dir();
-        let lines = t.to_lines(&prev_dir);
-        dxf_lines_t.extend_from_slice(&lines);
 
-        let mesh = t.to_mesh(&prev_dir, 8, 8);
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.red_matl.clone()),
-            MainPipe::Tor(t),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
+pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands){
 
-        counter = counter + 1;
-    }
+    let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
 
-    for c in circles {
-        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
-        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
-        dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh();
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.white_matl.clone()),
-            MainPipe::Pipe(c),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
-    };
-
-
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_c,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::WHITE,
-        })),
-        PipeCenterLine
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_t,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::RED,
-        })),
-        PipeCenterLine
-    ));
-}
-pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands) {
-    //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-
-    ui_state.update(lraclr_arr);
-    let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
-    let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
-
-    //    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
-    //let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
-    //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    let (circles, tors) = cnc_to_poly(&lraclr_arr, &bend_commands.up_dir);
-
-
-    let mut counter = 0;
-    for t in tors {
-        let prev_dir = circles[counter].get_dir();
-        let lines = t.to_lines(&prev_dir);
-        dxf_lines_t.extend_from_slice(&lines);
-
-        let mesh = t.to_mesh(&prev_dir, 8, 8);
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.red_matl.clone()),
-            MainPipe::Tor(t),
-            Transform::default(),
-        )).observe(on_mouse_button_click).id();
-
-        counter = counter + 1;
-    }
-
-  for c in circles {
-        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
-        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
-        dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh();
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.white_matl.clone()),
-            MainPipe::Pipe(c),
-            Transform::default(),
-        )).observe(on_mouse_button_click).id();
-    };
-
-
-/*    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_c,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::WHITE,
-        })),
-        PipeCenterLine
-    ));*/
-/*    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_t,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::RED,
-        })),
-        PipeCenterLine
-    ));*/
-    bend_commands.straight = lraclr_arr.clone();
-    bend_commands.anim_state = AnimState::default();
-}
-pub fn load_mesh_by_t(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands) {
-    //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
-
-    ui_state.update(lraclr_arr);
-    //let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
-    //let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
-    let segment_len=tot_pipe_len(lraclr_arr)/1000.0;
-
-    //    let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
-    //let lraclr_arr_mm: Vec<LRACLR> = analyze_stp(&stp);
-    //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-    let (circles, tors) = cnc_to_poly(&lraclr_arr, &bend_commands.up_dir);
-
-    let id_size:u64= (circles.len() + tors.len()) as u64;
-
-    let mut t=0;
-
-
-    for id in 0.. id_size {
-
+    meshes_t.into_iter().for_each(|(m, t,id)| {
         if(id.is_odd()){
-            //tor
-
-            let mut counter = 0;
-
-            for tor in &tors {
-                if(tor.id==id){
-                    let prev_dir = &circles[counter].get_dir();
-                    // let lines = t.to_lines(&prev_dir);
-                    // dxf_lines_t.extend_from_slice(&lines);
-
-                    let mesh = tor.to_mesh_with_seg_len(&prev_dir, 8, 8,segment_len);
-                    let handle: Handle<Mesh> = meshes.add(mesh);
-                    let entity: Entity = commands.spawn((
-                        Mesh3d(handle),
-                        MeshMaterial3d(shared_materials.red_matl.clone()),
-                        MainPipe::Tor(tor.clone()),
-                        Transform::default(),
-                    )).observe(on_mouse_button_click).id();
-                    counter = counter + 1;
-                }
-
-            }
-
-
-
-        }  else{
-            for c in &circles {
-                if(c.id==id){
-
-                    let meshes_s: Vec<Mesh> = c.clone().to_mesh_with_seg_len(segment_len);
-                    for m in meshes_s {
-                        let mut c_m = c.clone();
-                        c_m.t=t;
-                        t=t+1;
-                        let handle: Handle<Mesh> = meshes.add(m);
-                        let entity: Entity = commands.spawn((
-                            Mesh3d(handle),
-                            MeshMaterial3d(shared_materials.white_matl.clone()),
-                            MainPipe::Pipe(c_m.clone()),
-                            Transform::default(),
-                        )).observe(on_mouse_button_click).id();
-                    }
-
-                }
-            };
+            let handle: Handle<Mesh> = meshes.add(m);
+            let entity: Entity = commands.spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(shared_materials.red_matl.clone()),
+                MeshPipe{
+                    t,
+                },
+                Transform::default(),
+            )).observe(on_mouse_button_click).id();
+        }else{
+            let handle: Handle<Mesh> = meshes.add(m);
+            let entity: Entity = commands.spawn((
+                Mesh3d(handle),
+                MeshMaterial3d(shared_materials.hover_matl.clone()),
+                MeshPipe{
+                    t,
+                },
+                Transform::default(),
+            )).observe(on_mouse_button_click).id();
         }
-        println!("Processing id: {:?}", id);
-    }
+    });
+
+   meshes_m_t.into_iter().for_each(|(m, t,id)| {
+        let handle: Handle<Mesh> = meshes.add(m);
+        let entity: Entity = commands.spawn((
+            Mesh3d(handle),
+            MeshMaterial3d(shared_materials.white_matl.clone()),
+            MeshPipeStright{
+                t,
+            },
+            Transform::default(),
+        )).observe(on_mouse_button_click).id();
+    });
+
+    load_mesh_centerline(&lraclr_arr, meshes,commands, &shared_materials, lines_materials, ui_state,  bend_commands);
 
 
-    bend_commands.straight = lraclr_arr.clone();
-    bend_commands.anim_state = AnimState::default();
-}
-
-pub fn interpolate_by_tA(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> Vec<(Mesh, i64)> {
-    let step:i64=1000;
-    let len: f64 = tot_pipe_len(cmnd);
-    println!("len: {:?}", len);
-    let r=cmnd[0].pipe_radius as f32;
-    let mut ret:Vec<(Mesh,i64)> = vec![];
-
-    let mut step_len=len/step as f64;
-    let mut fragment_len=0.0;
-    let mut id:u64 = 0;
-    let (circles, tors) = cnc_to_poly(cmnd, up_dir);
-    let indexes=&circles.len() +&tors.len();
-    let mut x_dir=Vector3::new(1.0,0.0,0.0);
-    let mut y_dir=Vector3::new(0.0,1.0,0.0);
-    let mut z_dir=Vector3::new(0.0,0.0,1.0);
-    let mut pt_a: Point3<f64>=Point3::new(0.0,0.0,0.0);
-    let mut pt: Point3<f64>=Point3::new(0.0,0.0,0.0);
-    let mut rot_deg=0.0;
-    let mut dist =0.0;
-
-    for t in 1..step{
-        dist = dist+step_len;
-        for i in (0..indexes).step_by(2) {
-            match circles.iter().find(|cil|cil.id==i as u64) {
-                None => { println!("Index NF{}",i);}
-                Some(c) => {
-                    let  min=fragment_len;
-                    fragment_len=fragment_len+c.h;
-                    let  max=fragment_len;
-                    if(dist>=min && dist<max){
-                        id=c.id;
-                        rot_deg=LRACLR::rotate_by_id(c.id as i32, cmnd);
-                        let offset=dist-min;
-                        pt =c.ca.loc+ c.ca.dir*offset;
-                        let pt2: Point3<f64> =c.ca.loc+ c.ca.dir*(offset+1.0);
-                        x_dir=pt2.sub(pt);
-                        match  tors.iter().find(|tor| tor.id==(i+1) as u64){
-                            None => {
-                                match  tors.iter().find(|tor| tor.id==(i-1) as u64) {
-                                    None => {}
-                                    Some(arc) => {
-                                        let pt2=pt+arc.bend_plane_norm.normalize();
-                                        z_dir=pt.sub(pt2);
-                                        y_dir=z_dir.cross(x_dir);
-                                        //rot_deg= LRACLR::rotate_by_id(arc.id as i32, cmnd);
-                                    }
-                                }
-
-                            }
-                            Some(arc) => {
-                                let pt2=pt+arc.bend_plane_norm.normalize();
-                                z_dir=pt.sub(pt2);
-                                y_dir=z_dir.cross(x_dir);
-                                //rot_deg=LRACLR::rotate_by_id(arc.id as i32, cmnd);
-                            }
-                        }
-                    }else{
-                        match  tors.iter().find(|tor| tor.id==(i+1) as u64) {
-                            None => { }
-                            Some(arc) => {
-                                let min=fragment_len;
-                                fragment_len=fragment_len+arc.get_len();
-                                let max=fragment_len;
-                                if(dist>=min && dist<max){
-                                    id=arc.id;
-                                    let offset=dist-min;
-                                    let v1: Vector3<f64> = arc.ca.loc.sub(arc.bend_center_point);
-                                    let v2: Vector3<f64> = arc.cb.loc.sub(arc.bend_center_point);
-                                    let total_angle: f64 = (v1.dot(v2) / (v1.magnitude() * v2.magnitude())).acos();
-                                    let total_arc_length: f64 = total_angle * arc.bend_radius;
-                                    let theta = offset / arc.bend_radius;
-                                    let axis = v1.cross(v2);
-                                    let normalized_axis = axis.normalize();
-                                    let v_target = v1 * theta.cos() + normalized_axis.cross(v1) * theta.sin();
-                                    pt = arc.bend_center_point.add(v_target);
-                                    //println!("ImHere T {} D {} min {} max {} Point {:?}", arc.id,dist,min,max,pt);
-                                    let pt2=pt+arc.bend_plane_norm.normalize();
-                                    let v3=pt.sub(arc.bend_center_point).normalize();
-                                    z_dir=pt.sub(pt2);
-                                    y_dir=(pt+v3).sub(pt);
-                                    x_dir=y_dir.cross(z_dir);
-                                    //rot_deg=LRACLR::rotate_by_id(arc.id as i32, cmnd);
-                                }
-
-                                //println!("L A {}",fragment_len);
-                                //rintln!("Index {} C {}  T {}", i, c.id, arc.id);
-                            }
-                        }
-                    }
-                }
-            };
-        }
-
-        let mesh=triangulate_cylinder(&pt_a, &pt,r,8);
-        ret.push((mesh,t));
-        println!("L A {:?} {:?} {:?} {:?}",t,dist,pt_a,pt);
-
-        pt_a= pt;
-
-    }
-    ret
+    //bend_commands.original_file = stp;
+    //bend_commands.straight = lraclr_arr.clone();
 }
 
 pub fn interpolate_by_t(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Vec<(Mesh, i64, u64)>, Vec<(Mesh, i64, u64)>) {
@@ -1056,8 +837,8 @@ pub fn load_mesh_centerline(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets
 
     let (circles, tors) = cnc_to_poly(&lraclr_arr, &bend_commands.up_dir);
 
-    let data: Vec<u8> =all_to_stp(&circles, &tors);
-    fs::write("d:\\2\\output.stp", &data);
+    //let data: Vec<u8> =all_to_stp(&circles, &tors);
+    //fs::write("d:\\2\\output.stp", &data);
 
     let mut counter = 0;
     for t in tors {
@@ -1094,64 +875,8 @@ pub fn load_mesh_centerline(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets
         Transform::default(),
         PipeCenterLine
     ));
-    bend_commands.straight = lraclr_arr.clone();
-    bend_commands.anim_state = AnimState::default();
-}
-
-pub fn load_anim_mesh(circles: Vec<MainCylinder>, tors: Vec<BendToro>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>) {
-    let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
-    let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
-    let mut counter = 0;
-    for t in tors {
-        let prev_dir = circles[counter].get_dir();
-        let lines = t.to_lines(&prev_dir);
-        dxf_lines_t.extend_from_slice(&lines);
-
-        let mesh = t.to_mesh(&prev_dir, 8, 8);
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.red_matl.clone()),
-            MainPipe::Tor(t),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
-
-        counter = counter + 1;
-    }
-
-    for c in circles {
-        let v1 = Vec3::new(c.ca.loc.x as f32, c.ca.loc.y as f32, c.ca.loc.z as f32);
-        let v2 = Vec3::new(c.cb.loc.x as f32, c.cb.loc.y as f32, c.cb.loc.z as f32);
-        dxf_lines_c.push((v1, v2));
-        let mesh = c.to_mesh();
-        let handle: Handle<Mesh> = meshes.add(mesh);
-        let entity: Entity = commands.spawn((
-            Mesh3d(handle),
-            MeshMaterial3d(shared_materials.white_matl.clone()),
-            MainPipe::Pipe(c),
-            //Disabled,
-        )).observe(on_mouse_button_click).id();
-    };
-
-
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_c,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::WHITE,
-        })),
-        PipeCenterLine
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(LineList {
-            lines: dxf_lines_t,
-        })),
-        MeshMaterial3d(lines_materials.add(LineMaterial {
-            color: LinearRgba::RED,
-        })),
-        PipeCenterLine
-    ));
+    //bend_commands.straight = lraclr_arr.clone();
+    //bend_commands.anim_state = AnimState::default();
 }
 
 
@@ -1224,6 +949,14 @@ pub fn save_csv(lraclr_arr: &Vec<LRACLR>, path: &PathBuf) {
         let mut f = BufWriter::new(f);
         f.write_all(s_out.as_bytes()).expect("Unable to write data");
     }
+}
+
+pub fn save_stp(bend_commands: &BendCommands, path: &PathBuf) {
+    let (circles, tors) = cnc_to_poly( &bend_commands.straight, &bend_commands.up_dir);
+    let data: Vec<u8> =all_to_stp(&circles, &tors);
+    let f = OpenOptions::new().create(true).append(true).open(path).expect("Unable to open file");
+    let mut f = BufWriter::new(f);
+    f.write_all(data.as_bytes()).expect("Unable to write data");
 }
 
 pub fn test_date() -> bool {

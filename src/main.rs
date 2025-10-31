@@ -2,6 +2,7 @@
 
 use std::f32::consts::PI;
 use std::fs::File;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 use bevy::anti_alias::fxaa::Fxaa;
@@ -24,24 +25,20 @@ use bevy::winit::WinitWindows;
 use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::entity_disabling::Disabled;
-use bevy_ecs::event::EventWriter;
 use bevy_ecs::name::Name;
-use bevy_ecs::prelude::{ContainsEntity, EventReader, NonSend, Trigger, Without};
+use bevy_ecs::prelude::{ContainsEntity, NonSend,  Without};
 use bevy_ecs::query::QueryEntityError;
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
-use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
-use bevy_egui::egui::TextStyle;
-
+use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, EguiStartupSet};
 use bevy_http_client::{HttpClientPlugin, HttpRequest};
-use cgmath::{Deg, Point3, Rad, Vector3};
-use cgmath::num_traits::abs;
+use cgmath::{ Vector3};
 use ruststep::itertools::Itertools;
 use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::{analyze_stp, analyze_stp_path, BendToro, MainCylinder};
-use crate::algo::cnc::{cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, AnimState, AnimStatus, LRACLR};
-use crate::ui::{byt, interpolate_by_t, load_anim_mesh, load_mesh, load_mesh_by_t, load_mesh_centerline, reload_mesh, ui_system, UiState, LRAUI};
+use crate::algo::{analyze_stp,  BendToro, MainCylinder};
+use crate::algo::cnc::{ AnimState,  LRACLR};
+use crate::ui::{byt,   load_mesh,    ui_system, UiState};
 
 use bevy::prelude::*;
 use bevy::render::view::Hdr;
@@ -81,6 +78,9 @@ struct MeshPipeStright{
     t:i64
 }
 
+#[derive(Component, Clone)]
+struct MachinePart{}
+
 
 #[derive(Resource, Deref, DerefMut)]
 struct OriginalCameraTransform(Transform);
@@ -116,6 +116,8 @@ pub struct BendCommands {
     pub is_paused: bool,
     pub rot_step: f64,
     pub rot_angle: f64,
+    pub is_machine_visible: bool,
+    pub is_centerline_visible: bool,
 }
 impl Default for BendCommands {
     fn default() -> Self {
@@ -129,9 +131,11 @@ impl Default for BendCommands {
             id: 0,
             direction: 1.0,
             rot_matrix: Mat3::default(),
-            is_paused: false,
+            is_paused: true,
             rot_step: 0.0,
             rot_angle: 0.0,
+            is_machine_visible:true,
+            is_centerline_visible:true,
         }
     }
 }
@@ -194,14 +198,17 @@ fn main() {
 
     ))
 
-        .add_systems(PreStartup, setup_scene).add_systems(EguiPrimaryContextPass, (ui_system,))
-        .add_systems(FixedUpdate, animation_system)
+        .add_systems(PreStartup, setup_scene)
+        .add_systems(EguiPrimaryContextPass, (ui_system,))
+        //.add_systems(FixedUpdate, animation_system)
 
         /*        .add_systems(Startup, (setup_scene_utils, setup_machine, setup_drawings_layer))
                 .add_systems(PostStartup, after_setup_scene)
                 .add_systems(Update, (update_camera_transform_system, animate_simple))*/
 
-        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,)).add_systems(PostStartup, after_setup_scene).add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
+        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,setup_machine))
+        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
         .run();
 }
 
@@ -311,6 +318,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             dayamam_kizak_arka,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -328,6 +336,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             dayamam_kizak,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -345,6 +354,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             dayama_alt,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -363,6 +373,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             mengene_alt,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -381,6 +392,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             mengene,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -398,6 +410,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             palka2m,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -416,6 +429,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             palkam,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -434,6 +448,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             pens,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -452,6 +467,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             malafa,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -469,6 +485,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             sasi,
+            MachinePart{},
             Transform {
                 translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
@@ -502,11 +519,6 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
 
 
 fn after_setup_scene() {
-    /*  windows: NonSend<WinitWindows>,*/
-    /*    for window in windows.windows.values() {
-            window.set_title("Cansa Makina's pipe bend app");
-            window.set_window_icon(Some(load_icon()));
-        }*/
 }
 
 
@@ -579,81 +591,51 @@ fn setup_drawings_layer(
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
 ) {
-    //let stp: Vec<u8> = Vec::from((include_bytes!("files/6.stp")).as_slice());
+   //let stp: Vec<u8> = Vec::from((include_bytes!("files/6.stp")).as_slice());
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-    //let lraclr_arr_rev= reverse_lraclr(&lraclr_arr);
-    //load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
 
-    let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
+    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
 
-
-    meshes_t.into_iter().for_each(|(m, t,id)| {
-        if(id.is_odd()){
-            let handle: Handle<Mesh> = meshes.add(m);
-            let entity: Entity = commands.spawn((
-                Mesh3d(handle),
-                MeshMaterial3d(shared_materials.red_matl.clone()),
-                MeshPipe{
-                    t,
-                },
-                Transform::default(),
-            )).observe(on_mouse_button_click).id();
-        }else{
-            let handle: Handle<Mesh> = meshes.add(m);
-            let entity: Entity = commands.spawn((
-                Mesh3d(handle),
-                MeshMaterial3d(shared_materials.hover_matl.clone()),
-                MeshPipe{
-                    t,
-                },
-                Transform::default(),
-            )).observe(on_mouse_button_click).id();
-        }
-    });
-
-
-    meshes_m_t.into_iter().for_each(|(m, t,id)| {
-            let handle: Handle<Mesh> = meshes.add(m);
-            let entity: Entity = commands.spawn((
-                Mesh3d(handle),
-                MeshMaterial3d(shared_materials.white_matl.clone()),
-                MeshPipeStright{
-                    t,
-                },
-                Transform::default(),
-            )).observe(on_mouse_button_click).id();
-    });
-
-    //load_mesh_by_t(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-    load_mesh_centerline(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+    bend_commands.straight = lraclr_arr;
     bend_commands.original_file = stp;
-}
 
-fn animation_system(time: Res<Time<Fixed>>, mut bend_commands: ResMut<BendCommands>, mut query_meshes: Query<(Entity, &MainPipe)>, mut query_centerlines: Query<(Entity, &PipeCenterLine)>, mut commands: Commands,
-                    shared_materials: Res<SharedMaterials>,
-                    mut meshes: ResMut<Assets<Mesh>>,
-                    mut ui_state: ResMut<UiState>,
-                    mut lines_materials: ResMut<Assets<LineMaterial>>, ) {
-    match bend_commands.anim_state.status {
-        AnimStatus::Enabled => {
-            bend_commands.anim_state.dt = time.delta_secs_f64();
-            let (c, t) = cnc_to_poly_animate(&mut bend_commands);
-            for (entity, _) in &mut query_meshes {
-                commands.entity(entity).despawn();
-            }
-            for (entity, _) in &mut query_centerlines {
-                commands.entity(entity).despawn();
-            }
-            load_anim_mesh(c, t, &mut meshes, &mut commands, &shared_materials, &mut lines_materials);
-        }
-        AnimStatus::Disabled => {}
-        AnimStatus::Finished => {
-            bend_commands.anim_state.status = AnimStatus::Disabled;
-            reload_mesh(&mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-            println!("anim finished");
-        }
-    }
+    /*   let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
+   meshes_t.into_iter().for_each(|(m, t,id)| {
+       if(id.is_odd()){
+           let handle: Handle<Mesh> = meshes.add(m);
+           let entity: Entity = commands.spawn((
+               Mesh3d(handle),
+               MeshMaterial3d(shared_materials.red_matl.clone()),
+               MeshPipe{
+                   t,
+               },
+               Transform::default(),
+           )).observe(on_mouse_button_click).id();
+       }else{
+           let handle: Handle<Mesh> = meshes.add(m);
+           let entity: Entity = commands.spawn((
+               Mesh3d(handle),
+               MeshMaterial3d(shared_materials.hover_matl.clone()),
+               MeshPipe{
+                   t,
+               },
+               Transform::default(),
+           )).observe(on_mouse_button_click).id();
+       }
+   });
+   meshes_m_t.into_iter().for_each(|(m, t,id)| {
+           let handle: Handle<Mesh> = meshes.add(m);
+           let entity: Entity = commands.spawn((
+               Mesh3d(handle),
+               MeshMaterial3d(shared_materials.white_matl.clone()),
+               MeshPipeStright{
+                   t,
+               },
+               Transform::default(),
+           )).observe(on_mouse_button_click).id();
+   });
+   load_mesh_centerline(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);*/
 }
 
 fn on_mouse_button_click(
@@ -702,7 +684,7 @@ fn on_mouse_button_click(
 }
 
 
-fn animate_simple(
+/*fn animate_simple(
     time: Res<Time>,
     mut query: Query<(&mut Transform, &Name, &mut SimpleAnimation)>,
 ) {
@@ -731,7 +713,7 @@ fn animate_simple(
             }
         }
     }
-}
+}*/
 
 
 
@@ -756,7 +738,7 @@ fn event_listener_system(
     mut bend_commands: ResMut<BendCommands>,
     mut query_transform_main_pipe: Query<(&mut Transform, Option<&MeshPipe>, Option<&PipeCenterLine>, Option<&MeshPipeStright>),Or<(With<MeshPipe>, With<PipeCenterLine>, With<MeshPipeStright>)>>,
 
-    mut query_visibility: Query<(&mut Visibility,Option<&MeshPipe>, Option<&MeshPipeStright>)>,
+    mut query_visibility: Query<(&mut Visibility,Option<&MeshPipe>, Option<&MeshPipeStright>, Option<&MachinePart>, Option<&PipeCenterLine>)>,
 
 ) {
     // The .read() method iterates through all events of this type
@@ -767,12 +749,13 @@ fn event_listener_system(
         let (pt, xv, yv, zv, rot_deg, id,cp,l) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
         let dx = bend_commands.t*l;
 
-
         bend_commands.id = id;
+
         if (!bend_commands.id.is_odd()) {
-            bend_commands.rot_angle = rot_deg;
-            bend_commands.rot_step = -bend_commands.rot_angle;
-        } else {
+                bend_commands.rot_angle = rot_deg;
+                bend_commands.rot_step = -bend_commands.rot_angle;
+        }
+        else {
             if (bend_commands.rot_angle != 0.0) {
                 bend_commands.is_paused = true;
                 bend_commands.rot_step = bend_commands.rot_step + delta_rot * bend_commands.rot_angle.signum() ;
@@ -791,9 +774,6 @@ fn event_listener_system(
         if (!bend_commands.is_paused) {
             bend_commands.t += 0.001 * bend_commands.direction;
         }
-
-
-
 
         let mut x_rotation = Mat3::from_cols(
             Vec3::new(1.0, 0.0, 0.0),
@@ -853,11 +833,8 @@ fn event_listener_system(
 
 
         });
-
-
-
         // 2. Iterate over the query results
-        for (mut visibility, pipe, mesh_pipe_stright) in query_visibility.iter_mut() {
+        for (mut visibility, pipe, mesh_pipe_stright,machine_part,center_line) in query_visibility.iter_mut() {
 
             match pipe{
                 None => {}
@@ -881,7 +858,27 @@ fn event_listener_system(
                 }
             }
 
+            match machine_part{
+                None => {}
+                Some(p) => {
+                    if(bend_commands.is_machine_visible ){
+                        *visibility = Visibility::Visible;
+                    }else{
+                        *visibility = Visibility::Hidden;
+                    }
+                }
+            }
 
+            match center_line{
+                None => {}
+                Some(p) => {
+                    if(bend_commands.is_centerline_visible ){
+                        *visibility = Visibility::Visible;
+                    }else{
+                        *visibility = Visibility::Hidden;
+                    }
+                }
+            }
 
         }
 
