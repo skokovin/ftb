@@ -31,15 +31,13 @@ use image::EncodableLayout;
 use is_odd::IsOdd;
 use rfd::FileDialog;
 use regex::Regex;
-use crate::{on_mouse_button_click, BendCommands, MainPipe, MeshPipe, MeshPipeStright, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, SimpleAnimation, VisibilityStore};
+use crate::{on_mouse_button_click, BendCommands, MainPipe, MeshPipe, MeshPipeStright, OccupiedScreenSpace, PipeCenterLine, SharedMaterials,  VisibilityStore};
 use crate::adds::line::{LineList, LineMaterial};
-use crate::algo::cnc::{all_to_stp, cnc_to_poly, cnc_to_poly_animate, reverse_lraclr, tot_pipe_len, AnimState, AnimStatus, LRACLR};
-use crate::algo::{analyze_stp, triangulate_cylinder, BendToro, MainCylinder};
+use crate::algo::cnc::{all_to_stp, cnc_to_poly,  reverse_lraclr, tot_pipe_len, AnimState, AnimStatus, LRACLR};
+use crate::algo::{analyze_stp,};
 use crate::algo::triangulation::triangulate_pipe;
 
-pub static STRIGHT_SPEED: AtomicUsize = AtomicUsize::new(100);
-pub static ROTATE_SPEED: AtomicUsize = AtomicUsize::new(50);
-pub static ANGLE_SPEED: AtomicUsize = AtomicUsize::new(20);
+
 
 #[derive(Resource)]
 pub struct UiState {
@@ -123,7 +121,6 @@ pub fn ui_system(mut contexts: EguiContexts,
                  mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
                  shared_materials: Res<SharedMaterials>,
                  mut meshes: ResMut<Assets<Mesh>>,
-                 mut query: Query<(&Name, &mut SimpleAnimation)>,
                  mut lines_materials: ResMut<Assets<LineMaterial>>,
 ) {
     let ctx = contexts.ctx_mut().expect("REASON");
@@ -163,10 +160,17 @@ pub fn ui_system(mut contexts: EguiContexts,
                                     commands.entity(entity).despawn();
                                 }
                                 let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-                                //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-                                //bend_commands.straight = lraclr_arr;
+                                bend_commands.straight = lraclr_arr;
                                 bend_commands.original_file = stp;
+                                re_load_mesh(&mut meshes,
+                                             &mut commands,
+                                             &shared_materials,
+                                             &mut lines_materials,
+                                             &mut ui_state,
+                                             &mut bend_commands,
+                                             query_meshes_stright,
+                                             query_meshes,
+                                             query_centerlines);
                             }
                             Err(_) => {}
                         }
@@ -175,19 +179,20 @@ pub fn ui_system(mut contexts: EguiContexts,
             };
             ui.separator();
             if ui.button("Reverse").clicked() {
-                for (entity, _) in &mut query_meshes {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_meshes_stright {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_centerlines {
-                    commands.entity(entity).despawn();
-                }
+
                 let lraclr_arr = reverse_lraclr(&bend_commands.straight);
-                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-                //bend_commands.straight = lraclr_arr;
+                bend_commands.straight = lraclr_arr;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
             };
+
             ui.separator();
 
             if ui.button("CSV").clicked() {
@@ -279,34 +284,23 @@ pub fn ui_system(mut contexts: EguiContexts,
                     stp = Vec::from((include_bytes!("../files/17.stp")).as_slice());
                     ui.close_menu();
                 };
-
                 if (!stp.is_empty()) {
 
-
-                    println!("DESPAWN query_meshes {:?}",query_meshes.iter().len());
-                    println!("DESPAWN query_meshes_stright {:?}",query_meshes_stright.iter().len());
-                    println!("DESPAWN query_centerlines {:?}",query_centerlines.iter().len());
-                    for (entity, _) in &mut query_meshes {
-                        commands.entity(entity).despawn();
-
-                    }
-                    for (entity, _) in &mut query_meshes_stright {
-                        commands.entity(entity).despawn();
-
-                    }
-                    for (entity, _) in &mut query_centerlines {
-                        commands.entity(entity).despawn();
-                    }
-
                     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-                    //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
                     bend_commands.straight = lraclr_arr;
                     bend_commands.original_file = stp;
+                    re_load_mesh(&mut meshes,
+                                 &mut commands,
+                                 &shared_materials,
+                                 &mut lines_materials,
+                                 &mut ui_state,
+                                 &mut bend_commands,
+                                 query_meshes_stright,
+                                 query_meshes,
+                                 query_centerlines);
                 }
             });
             ui.separator();
-
             if ui.button(eye_icon).clicked() {
 
                 if (bend_commands.is_machine_visible){
@@ -317,7 +311,6 @@ pub fn ui_system(mut contexts: EguiContexts,
 
             }
             ui.separator();
-
             if ui.button(centerline_eye_icon).clicked() {
                 if (bend_commands.is_centerline_visible){
                     bend_commands.is_centerline_visible = false;
@@ -325,35 +318,27 @@ pub fn ui_system(mut contexts: EguiContexts,
                     bend_commands.is_centerline_visible = true;
                 }
             }
-
-
             ui.separator();
-
-
-            let dorn_str = if (bend_commands.up_dir.z > 0.0) { "DORN R" } else { "DORN L" };
-
+/*            let dorn_str = if (bend_commands.up_dir.z > 0.0) { "DORN R" } else { "DORN L" };
             if (ui.button(dorn_str)).clicked() {
                 if (bend_commands.up_dir.z > 0.0) {
                     bend_commands.up_dir.z = -1.0;
                 } else {
                     bend_commands.up_dir.z = 1.0;
                 }
-
-                for (entity, _) in &mut query_meshes {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_meshes_stright {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_centerlines {
-                    commands.entity(entity).despawn();
-                }
                 let lraclr_arr: Vec<LRACLR> = analyze_stp(&bend_commands.original_file);
-                //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
                 bend_commands.straight = lraclr_arr;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
 
-            };
+            };*/
         });
     });
 
@@ -532,18 +517,17 @@ pub fn ui_system(mut contexts: EguiContexts,
             }
 
             if (is_changed) {
-                for (entity, _) in &mut query_meshes {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_meshes_stright {
-                    commands.entity(entity).despawn();
-                }
-                for (entity, _) in &mut query_centerlines {
-                    commands.entity(entity).despawn();
-                }
                 let lraclr_arr: Vec<LRACLR> = ui_state.to_lraclr().clone();
-                //let lraclr_arr: Vec<LRACLR> = convert_to_meter(&lraclr_arr_mm);
-                load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
+                bend_commands.straight = lraclr_arr;
+                     re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                                  query_meshes,
+                                  query_centerlines);
             }
 
             if (deleted_index != 0) {
@@ -558,8 +542,16 @@ pub fn ui_system(mut contexts: EguiContexts,
                 }
                 let new_commands = delete_lra_row(deleted_index, &bend_commands.straight);
                 ui_state.update(&new_commands);
-                load_mesh(&new_commands, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
                 bend_commands.straight = new_commands;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
             }
 
             if (add_index != -1) {
@@ -574,8 +566,16 @@ pub fn ui_system(mut contexts: EguiContexts,
                 }
                 let new_commands = add_lra_row(deleted_index, &bend_commands.straight);
                 ui_state.update(&new_commands);
-                load_mesh(&new_commands, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
                 bend_commands.straight = new_commands;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
             }
 
             if (seleced_id != i32::MAX) {
@@ -597,12 +597,19 @@ pub fn ui_system(mut contexts: EguiContexts,
                 commands.entity(entity).despawn();
             }
             ui_state.update(&new_lra);
-            load_mesh(&new_lra, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
             bend_commands.straight = new_lra;
+            re_load_mesh(&mut meshes,
+                         &mut commands,
+                         &shared_materials,
+                         &mut lines_materials,
+                         &mut ui_state,
+                         &mut bend_commands,
+                         query_meshes_stright,
+                         query_meshes,
+                         query_centerlines);
         }
         ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
     }).response.rect.width();
-
     occupied_screen_space.bottom =egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
         let icon = if bend_commands.is_paused {
             egui_material_icons::icons::ICON_PLAY_ARROW
@@ -648,8 +655,6 @@ pub fn ui_system(mut contexts: EguiContexts,
             );
         });
     }).response.rect.width();
-
-
     if (is_cam_fixed) {
         let mut c = d3_camera.single_mut().unwrap();
         c.enabled_motion = EnabledMotion {
@@ -667,9 +672,31 @@ pub fn ui_system(mut contexts: EguiContexts,
     };
 }
 
-pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands){
+pub fn re_load_mesh(
+                    meshes: &mut ResMut<Assets<Mesh>>,
+                    commands: &mut Commands,
+                    shared_materials: &Res<SharedMaterials>,
+                    lines_materials: &mut ResMut<Assets<LineMaterial>>,
+                    ui_state: &mut UiState,
+                    bend_commands: &mut BendCommands,
+                    mut query_meshes_stright: Query<(Entity, &MeshPipeStright)>,
+                    mut query_meshes: Query<(Entity, &MeshPipe)>,
+                    mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
 
-    let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
+){
+
+    for (entity, _) in &mut query_meshes {
+        commands.entity(entity).despawn();
+    }
+    for (entity, _) in &mut query_meshes_stright {
+        commands.entity(entity).despawn();
+    }
+    for (entity, _) in &mut query_centerlines {
+        commands.entity(entity).despawn();
+    }
+
+
+    let (meshes_t,meshes_m_t) =interpolate_by_t(&bend_commands.straight, &bend_commands.up_dir);
 
     meshes_t.into_iter().for_each(|(m, t,id)| {
         if(id.is_odd()){
@@ -695,7 +722,7 @@ pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, co
         }
     });
 
-   meshes_m_t.into_iter().for_each(|(m, t,id)| {
+    meshes_m_t.into_iter().for_each(|(m, t,id)| {
         let handle: Handle<Mesh> = meshes.add(m);
         let entity: Entity = commands.spawn((
             Mesh3d(handle),
@@ -707,13 +734,8 @@ pub fn load_mesh(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, co
         )).observe(on_mouse_button_click).id();
     });
 
-    load_mesh_centerline(&lraclr_arr, meshes,commands, &shared_materials, lines_materials, ui_state,  bend_commands);
-
-
-    //bend_commands.original_file = stp;
-    //bend_commands.straight = lraclr_arr.clone();
+    load_mesh_centerline(meshes,commands, &shared_materials, lines_materials, ui_state,  bend_commands);
 }
-
 pub fn interpolate_by_t(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Vec<(Mesh, i64, u64)>, Vec<(Mesh, i64, u64)>) {
     let num_segments=64;
     let len: f64 = tot_pipe_len(cmnd);
@@ -828,14 +850,21 @@ pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, V
 
 }
 
-pub fn load_mesh_centerline(lraclr_arr: &Vec<LRACLR>, meshes: &mut ResMut<Assets<Mesh>>, commands: &mut Commands, shared_materials: &Res<SharedMaterials>, lines_materials: &mut ResMut<Assets<LineMaterial>>, ui_state: &mut UiState, bend_commands: &mut BendCommands) {
+pub fn load_mesh_centerline(
+    meshes: &mut ResMut<Assets<Mesh>>,
+    commands: &mut Commands,
+    shared_materials: &Res<SharedMaterials>,
+    lines_materials:
+    &mut ResMut<Assets<LineMaterial>>,
+    ui_state: &mut UiState,
+    bend_commands: &BendCommands) {
     //let mut the_up_dir: Vector3<f64> = Vector3::new(0., 0., 1.);
 
-    ui_state.update(lraclr_arr);
+    ui_state.update(&bend_commands.straight);
     let mut dxf_lines_c: Vec<(Vec3, Vec3)> = vec![];
     let mut dxf_lines_t: Vec<(Vec3, Vec3)> = vec![];
 
-    let (circles, tors) = cnc_to_poly(&lraclr_arr, &bend_commands.up_dir);
+    let (circles, tors) = cnc_to_poly(&bend_commands.straight, &bend_commands.up_dir);
 
     //let data: Vec<u8> =all_to_stp(&circles, &tors);
     //fs::write("d:\\2\\output.stp", &data);
@@ -922,7 +951,6 @@ fn add_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
     });
     v
 }
-
 
 pub fn save_csv(lraclr_arr: &Vec<LRACLR>, path: &PathBuf) {
     let mut s_out = String::new();

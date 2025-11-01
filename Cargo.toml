@@ -1,6 +1,6 @@
 [package]
 name = "ftb"
-version = "18.0.0"
+version = "19.0.0"
 edition = "2024"
 
 [profile.release]
@@ -40,7 +40,6 @@ truck-meshalgo = { git = "https://github.com/ricosjp/truck.git" }
 truck-stepio = { git = "https://github.com/ricosjp/truck.git" }
 #egui_alignments = "0.3.4"
 egui_material_icons = "0.5.0"
-
 bevy = "0.17.2"
 bevy_ecs = "0.17.2"
 bevy_editor_cam = { path = "d:/rustproj2/bevy_editor_cam" }

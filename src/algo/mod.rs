@@ -37,21 +37,7 @@ use truck_geometry::prelude::{BSplineCurve, Plane};
 use truck_meshalgo::prelude::*;
 use truck_stepio::r#in::{Axis2Placement3dHolder, Axis2PlacementHolder, BSplineCurveWithKnots, CartesianPoint, CartesianPointHolder, CurveAnyHolder, DirectionHolder, FaceBoundHolder, NonRationalBSplineCurveHolder, NonRationalBSplineSurfaceHolder, Table, VectorHolder, VertexPointHolder};
 use utf8_read::Reader;
-use crate::ui::{ANGLE_SPEED, ROTATE_SPEED, STRIGHT_SPEED};
 
-pub const PI36_FLOAT_RANGE: [f64; 36] = {
-    let mut v: [f64; 36] = [0.0; 36];
-    let mut i = 0;
-    loop{
-        if i >= 35 {
-            v[i]=2.0*PI;
-            break;
-        }
-        v[i]=2.0*PI/36.0 * i as f64;
-        i += 1;
-    }
-    v
-};
 pub const HALF_PI18_FLOAT_RANGE: [f64; 64] = {
     let mut v: [f64; 64] = [0.0; 64];
     let mut i = 0;
@@ -97,77 +83,6 @@ pub const EXTRA_LEN_CALC: f64 = 3.0;
 pub const EXTRA_R_CALC: f64 = 1.2;
 pub const MAX_BEND_RADIUS: f64 = 500.0;
 pub const DIVIDER: f64 = 100000000.0;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Triangle {
-    pub p: [cgmath::Point3<f32>; 3],
-    pub normal: cgmath::Vector3<f32>,
-}
-impl Triangle {
-    pub fn new(p0: cgmath::Point3<f32>, p1: cgmath::Point3<f32>, p2: cgmath::Point3<f32>) -> Self {
-        let u = p1.sub(p0);
-        let v = p2.sub(p0);
-        let normal: cgmath::Vector3<f32> = cgmath::Vector3::new(
-            u.y * v.z - u.z * v.y,
-            u.z * v.x - u.x * v.z,
-            u.x * v.y - u.y * v.x,
-        );
-        Self {
-            p: [p0, p1, p2],
-            normal: normal,
-        }
-    }
-    pub fn from_f64_without_normals(
-        p0_64: cgmath::Point3<f64>,
-        p1_64: cgmath::Point3<f64>,
-        p2_64: cgmath::Point3<f64>,
-    ) -> Self {
-        let p0: cgmath::Point3<f32> = cgmath::Point3::new(p0_64.x as f32, p0_64.y as f32, p0_64.z as f32);
-        let p1: cgmath::Point3<f32> = cgmath::Point3::new(p1_64.x as f32, p1_64.y as f32, p1_64.z as f32);
-        let p2: cgmath::Point3<f32> = cgmath::Point3::new(p2_64.x as f32, p2_64.y as f32, p2_64.z as f32);
-
-        let u = p1.sub(p0);
-        let v = p2.sub(p0);
-        let normal: cgmath::Vector3<f32> = cgmath::Vector3::new(
-            u.y * v.z - u.z * v.y,
-            u.z * v.x - u.x * v.z,
-            u.x * v.y - u.y * v.x,
-        );
-        Self {
-            p: [p0, p1, p2],
-            normal: normal,
-        }
-    }
-
-    pub fn as_p64(&self) -> [truck_base::cgmath64::Point3; 3] {
-        let p64: [truck_base::cgmath64::Point3; 3] = [
-            cgmath::Point3::new(self.p[0].x as f64, self.p[0].y as f64, self.p[0].z as f64),
-            cgmath::Point3::new(self.p[1].x as f64, self.p[1].y as f64, self.p[1].z as f64),
-            cgmath::Point3::new(self.p[2].x as f64, self.p[2].y as f64, self.p[2].z as f64),
-        ];
-        p64
-    }
-}
-
-#[derive(Clone)]
-pub struct RawMesh {
-    pub id: i32,
-    pub vertex_normal: Vec<f32>,
-    pub indx: Vec<i32>,
-    pub bbx: BoundingBox<cgmath::Point3<f64>>,
-    pub triangles: Vec<Triangle>,
-}
-impl Default for RawMesh {
-    fn default() -> Self {
-        RawMesh {
-            id: -999,
-            vertex_normal: vec![],
-            indx: vec![],
-            bbx: BoundingBox::default(),
-            triangles: vec![],
-        }
-    }
-}
 
 #[derive(Clone,Debug)]
 pub struct MainCircle {
@@ -1449,187 +1364,6 @@ impl BendToro {
     
 }
 
-/*pub fn triangulate_cylinderA(p1: Vec3, p2: Vec3, radius: f32, num_segments: usize, ) -> Mesh {
-
-
-    let mut vertices: Vec<glam::Vec3> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut normals: Vec<glam::Vec3> = Vec::new();
-
-
-    // 1. Calculate the cylinder's axis and basis vectors
-    let axis = p2 - p1;
-    let dir = axis.normalize_or_zero(); // Normalized direction of the cylinder
-    let height = axis.length();
-    let up: Vec3 ={
-        let nx=dir.z.copysign(dir.x);
-        let ny=dir.z.copysign(dir.y);
-        let nz=-(dir.x.abs()+dir.y.abs()).copysign(dir.z);
-        Vec3::new(nx,ny,nz)
-    };
-
-
-
-    // Find a vector not parallel to `dir`
-    // We use Vec3::Y, but if `dir` is (almost) vertical, we use Vec3::X
-    //let up = if dir.dot(Vec3::Y).abs() > 0.999 {
-   //     Vec3::X
-   // } else {
-   //     Vec3::Y
-   // };
-
-    // `u` and `v` form an orthogonal basis on the plane perpendicular to `dir`
-    let u = dir.cross(up).normalize();
-    let v = dir.cross(u); // `v` is already normalized
-
-    // --- 2. Generate Vertices ---
-
-    // We pre-calculate the 2D circle points
-    let mut circle_points: Vec<Vec3> = Vec::with_capacity(num_segments);
-    for i in 0..num_segments {
-        let angle = (i as f32 / num_segments as f32) * 2.0 * std::f32::consts::PI;
-        let (sin, cos) = angle.sin_cos();
-
-        // The offset from the center for this point on the circle
-        let offset = (u * cos + v * sin) * radius;
-        circle_points.push(offset);
-    }
-
-    // ----- Bottom Cap -----
-    let bottom_center_idx = vertices.len() as u32;
-    vertices.push(p1);
-    normals.push(-dir);
-
-
-    let bottom_ring_start_idx = vertices.len() as u32;
-    for offset in &circle_points {
-        vertices.push(p1 + *offset);
-        normals.push(-dir);
-
-    }
-
-    // ----- Top Cap -----
-    let top_center_idx = vertices.len() as u32;
-    vertices.push(p2);
-    normals.push(dir);
-
-
-
-    let top_ring_start_idx = vertices.len() as u32;
-    for offset in &circle_points {
-        vertices.push( p2 + *offset);
-        normals.push(dir);
-    }
-
-    // ----- Sides -----
-    // These vertices are separate from the caps because they have
-    // different normals (pointing outwards)
-    let side_start_idx = vertices.len() as u32;
-    for offset in &circle_points {
-        let side_normal = offset.normalize_or_zero();
-        // Bottom-side vertex
-        vertices.push( p1 + *offset);
-        normals.push(side_normal);
-        // Top-side vertex
-        vertices.push( p2 + *offset);
-        normals.push(side_normal);
-    }
-
-    // --- 3. Generate Indices ---
-
-    for i in 0..num_segments {
-        let i0 = i as u32;
-        let i1 = ((i + 1) % num_segments) as u32; // Wrap around
-
-        // --- Cap Indices ---
-
-        // Bottom Cap (winding: center -> i1 -> i0)
-        indices.push(bottom_center_idx);
-        indices.push(bottom_ring_start_idx + i1);
-        indices.push(bottom_ring_start_idx + i0);
-
-        // Top Cap (winding: center -> i0 -> i1)
-        indices.push(top_center_idx);
-        indices.push(top_ring_start_idx + i0);
-        indices.push(top_ring_start_idx + i1);
-
-        // --- Side Indices ---
-        // Each side segment is a quad made of two triangles.
-        // The side vertices are stored in pairs (bottom, top).
-
-        // Get the indices for the four corners of the quad
-        let side_v0_bottom = side_start_idx + i0 * 2;
-        let side_v0_top = side_start_idx + i0 * 2 + 1;
-        let side_v1_bottom = side_start_idx + i1 * 2;
-        let side_v1_top = side_start_idx + i1 * 2 + 1;
-
-        // Triangle 1
-        indices.push(side_v0_bottom);
-        indices.push(side_v0_top);
-        indices.push(side_v1_top);
-
-        // Triangle 2
-        indices.push(side_v0_bottom);
-        indices.push(side_v1_top);
-        indices.push(side_v1_bottom);
-    }
-
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList,  RenderAssetUsages::default() );
-
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        VertexAttributeValues::Float32x3(
-            vertices.iter().map(|v| [v.x, v.y, v.z]).collect(),
-        ),
-    );
-
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        VertexAttributeValues::Float32x3(
-            normals.iter().map(|n| [n.x, n.y, n.z]).collect(),
-        ),
-    );
-
-
-
-    mesh.insert_indices(Indices::U32(indices));
-
-
-
-    mesh
-}
-*/
-pub fn triangulate_cylinder(p1t: &cgmath::Point3<f64>, p2t: &cgmath::Point3<f64>, radius: f32, num_segments: usize,) -> Mesh{
-    let rp: RegularPolygon = RegularPolygon::new(radius as f32, CILINDER_TRIANGULATION_SEGMENTS);
-    let (p1, p2) = {
-        let p1: cgmath::Point3<f32> =cgmath::Point3::new(p1t.x as f32,p1t.y as f32,p1t.z as f32);
-        let p2: cgmath::Point3<f32> =cgmath::Point3::new(p2t.x as f32,p2t.y as f32,p2t.z as f32);
-        let m1 = p1.to_vec().magnitude();
-        let m2 = p2.to_vec().magnitude();
-        if (m1 < m2) { (p1, p2) } else { (p2, p1) }
-    };
-
-    let vec: cgmath::Vector3<f32> = p2 - p1;
-    let len = vec.magnitude();
-    let vec_n: cgmath::Vector3<f32> = vec.normalize();
-    let vec_z: cgmath::Vector3<f32> = cgmath::Vector3::new(0.0, 0.0, 1.0);
-
-    let newrot: Basis3<f32> = Rotation::between_vectors(vec_z, vec_n);
-
-    let quart: Quaternion<f32> = Quaternion::from(newrot);
-    let rotation = Quat::from_xyzw(quart.v.x, quart.v.y, quart.v.z, quart.s);;
-
-    let mesh = Extrusion::new(rp, len);
-    let mut real_mesh: Mesh = Mesh::from(mesh);
-    real_mesh.translate_by(Vec3::new(0., 0., len / 2.0));
-    real_mesh.rotate_by(rotation);
-    real_mesh.translate_by(Vec3::new(p1.x, p1.y, p1.z));
-    real_mesh
-}
-
-
-
-
 pub fn intersect_line_by_plane(cylinder_dir_vec: &Vector3, radius_vec: &Vector3, plane_point: &Point3, line_p0: &Point3, line_p1: &Point3, ) -> Point3 {
     //https://stackoverflow.com/questions/5666222/3d-line-plane-intersection
     //n: normal vector of the Plane
@@ -1654,7 +1388,6 @@ pub fn project_point_to_vec(proj_vector: &Vector3, point_on_proj_vector: &Point3
     //println!("{:?} {:?}", point, 0);
     point
 }
-
 pub fn perpendicular_rand_dir(src:&Vector3)->Vector3{
     //https://math.stackexchange.com/questions/137362/how-to-find-perpendicular-vector-to-another-vector
     let nx=src.z.copysign(src.x);
@@ -1824,20 +1557,6 @@ pub fn analyze_stp(_stp: &Vec<u8>) -> Vec<LRACLR> {
     lracmd
 
 }
-
-
-
-/*pub fn convert_to_meter(lracmd: &Vec<LRACLR>) -> Vec<LRACLR> {
-    let mut lra:Vec<LRACLR>=vec![];
-    lracmd.iter().for_each(|lr| {
-        let mut nlra=lr.clone();
-        nlra.l=nlra.l/1000.0;
-        nlra.pipe_radius=nlra.pipe_radius/1000.0;
-        nlra.clr=nlra.clr/1000.0;
-        lra.push(nlra);
-    });
-    lra
-}*/
 
 pub fn extract_cyls(table: &Table, scale: f64) -> (Vec<MainCylinder>, Vec<BendToro>) {
     let mut toros: Vec<BendToro> = vec![];

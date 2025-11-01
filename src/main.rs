@@ -1,44 +1,32 @@
 //#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::f32::consts::PI;
-use std::fs::File;
-use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
-use bevy::anti_alias::fxaa::Fxaa;
-use bevy::anti_alias::smaa::Smaa;
 use bevy::asset::{AssetServer, Assets, Handle};
 use bevy::camera::Viewport;
 use bevy::color::palettes::tailwind::{BLUE_500, CYAN_300, GRAY_300, GRAY_600, RED_300, RED_500, YELLOW_300};
-
-
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::DefaultPlugins;
 use bevy::image::Image;
 use bevy::light::CascadeShadowConfigBuilder;
-use bevy::math::ops::cos;
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, StandardMaterial};
+use bevy::pbr::{ StandardMaterial};
 use bevy::platform::collections::HashMap;
 use bevy::post_process::bloom::Bloom;
-use bevy::window::{ExitCondition, PrimaryWindow};
-use bevy::winit::WinitWindows;
-use bevy_ecs::change_detection::Mut;
+use bevy::window::{ PrimaryWindow};
 use bevy_ecs::entity::Entity;
-use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::name::Name;
-use bevy_ecs::prelude::{ContainsEntity, NonSend,  Without};
-use bevy_ecs::query::QueryEntityError;
+use bevy_ecs::prelude::{ContainsEntity,  };
 use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
-use bevy_egui::{egui, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, EguiStartupSet};
-use bevy_http_client::{HttpClientPlugin, HttpRequest};
+use bevy_egui::{  EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,};
+use bevy_http_client::{HttpClientPlugin};
 use cgmath::{ Vector3};
 use ruststep::itertools::Itertools;
 use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
 use crate::algo::{analyze_stp,  BendToro, MainCylinder};
 use crate::algo::cnc::{ AnimState,  LRACLR};
-use crate::ui::{byt,   load_mesh,    ui_system, UiState};
+use crate::ui::{byt, re_load_mesh, ui_system, UiState};
 
 use bevy::prelude::*;
 use bevy::render::view::Hdr;
@@ -91,13 +79,7 @@ struct OccupiedScreenSpace {
     right: f32,
     bottom: f32,
 }
-#[derive(Component)]
-struct SimpleAnimation {
-    start_pos_x: f32,
-    end_pos_x: f32,
-    duration: f32,
-    elapsed: f32,
-}
+
 #[derive(Resource)]
 pub struct VisibilityStore {
     pub visible_roots: Vec<Entity>,
@@ -140,9 +122,6 @@ impl Default for BendCommands {
     }
 }
 
-
-
-
 #[derive(Resource)]
 struct SharedMaterials {
     diffuse_map: Handle<Image>,
@@ -177,7 +156,10 @@ fn main() {
     };
 
 
-    App::new().insert_resource(Time::<Fixed>::from_hz(30.0)).insert_resource(vis_stor).insert_resource(egui_settings).init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_message::<TickEvent>()
+    App::new()
+        .insert_resource(vis_stor)
+        .insert_resource(egui_settings)
+        .init_resource::<OccupiedScreenSpace>().init_resource::<BendCommands>().insert_resource(UiState { lrauis: vec![], total_length: "0".to_string(), pipe_diameter: "0".to_string() }).add_message::<TickEvent>()
 
         .insert_resource(TickTimer(Timer::new(
             Duration::from_millis(30),
@@ -195,10 +177,9 @@ fn main() {
         DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
-
     ))
 
-        .add_systems(PreStartup, setup_scene)
+        .add_systems(PreStartup, (setup_scene,))
         .add_systems(EguiPrimaryContextPass, (ui_system,))
         //.add_systems(FixedUpdate, animation_system)
 
@@ -207,7 +188,7 @@ fn main() {
                 .add_systems(Update, (update_camera_transform_system, animate_simple))*/
 
         .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,setup_machine))
-        .add_systems(PostStartup, after_setup_scene)
+        .add_systems(PostStartup, (after_setup_scene,))
         .add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
         .run();
 }
@@ -223,7 +204,7 @@ fn setup_scene(mut commands: Commands,
     let white_matl: Handle<StandardMaterial> = materials.add(
         StandardMaterial {
             base_color: Color::from(BLUE_500), // Deep red color
-            metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
+            metallic: 0.5,                         // Highly metallic (0.0 to 1.0)
             perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
             reflectance: 0.7,                       // How much it reflects its environment
             ..default()
@@ -234,11 +215,9 @@ fn setup_scene(mut commands: Commands,
     let pressed_matl: Handle<StandardMaterial> = materials.add(Color::from(YELLOW_300));
     let red_matl: Handle<StandardMaterial> = materials.add(StandardMaterial {
         base_color: Color::from(RED_500), // Deep red color
-        metallic: 0.95,                         // Highly metallic (0.0 to 1.0)
+        metallic: 0.5,                         // Highly metallic (0.0 to 1.0)
         perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
         reflectance: 0.7,
-
-
         ..default()
     });
     let shm = SharedMaterials {
@@ -262,18 +241,18 @@ fn setup_scene(mut commands: Commands,
         Tonemapping::AcesFitted,
         Bloom::default(),
         EnvironmentMapLight {
-            intensity: 7000.0,
+            intensity: 3000.0,
             rotation: Default::default(),
-            diffuse_map: shm.diffuse_map.clone(),
-            specular_map: shm.specular_map.clone(),
-            affects_lightmapped_mesh_diffuse: true,
+            diffuse_map: shm.specular_map.clone(),
+            specular_map: shm.specular_map.clone(), //shm.specular_map.clone() diffuse_map
+            affects_lightmapped_mesh_diffuse: false,
         },
-        /*     DirectionalLight {
+/*             DirectionalLight {
             illuminance: light_consts::lux::FULL_DAYLIGHT,
             shadows_enabled: true,
             ..default()
-        },
-        CascadeShadowConfigBuilder {
+        },*/
+/*        CascadeShadowConfigBuilder {
                  maximum_distance: 3000.0,
                  first_cascade_far_bound: 900.0,
                  ..default()
@@ -325,12 +304,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("dayamam_kizak_arka"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
     commands.spawn(
@@ -343,12 +317,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("dayamam_kizak"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
     commands.spawn(
@@ -361,12 +330,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("dayama_alt"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -380,12 +344,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("mengene_alt"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -399,12 +358,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("mengene"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
     commands.spawn(
@@ -417,12 +371,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("palka2m"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -436,12 +385,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("palkam"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -455,12 +399,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("pens"),
-            SimpleAnimation {
-                start_pos_x: t.translation.x,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -474,12 +413,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("malafa"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
     commands.spawn(
@@ -492,12 +426,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
             Name::new("sasi"),
-            SimpleAnimation {
-                start_pos_x: 0.0,
-                end_pos_x: 0.0,
-                duration: 0.0,
-                elapsed: 0.0,
-            },
+
         )
     );
 
@@ -590,52 +519,24 @@ fn setup_drawings_layer(
     mut ui_state: ResMut<UiState>,
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     shared_materials: Res<SharedMaterials>,
+    mut query_meshes_stright: Query<(Entity, &MeshPipeStright)>,
+    mut query_meshes: Query<(Entity, &MeshPipe)>,
+    mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
 ) {
    //let stp: Vec<u8> = Vec::from((include_bytes!("files/6.stp")).as_slice());
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
     let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-
-    load_mesh(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);
-
     bend_commands.straight = lraclr_arr;
     bend_commands.original_file = stp;
-
-    /*   let (meshes_t,meshes_m_t) =interpolate_by_t(&lraclr_arr, &bend_commands.up_dir);
-   meshes_t.into_iter().for_each(|(m, t,id)| {
-       if(id.is_odd()){
-           let handle: Handle<Mesh> = meshes.add(m);
-           let entity: Entity = commands.spawn((
-               Mesh3d(handle),
-               MeshMaterial3d(shared_materials.red_matl.clone()),
-               MeshPipe{
-                   t,
-               },
-               Transform::default(),
-           )).observe(on_mouse_button_click).id();
-       }else{
-           let handle: Handle<Mesh> = meshes.add(m);
-           let entity: Entity = commands.spawn((
-               Mesh3d(handle),
-               MeshMaterial3d(shared_materials.hover_matl.clone()),
-               MeshPipe{
-                   t,
-               },
-               Transform::default(),
-           )).observe(on_mouse_button_click).id();
-       }
-   });
-   meshes_m_t.into_iter().for_each(|(m, t,id)| {
-           let handle: Handle<Mesh> = meshes.add(m);
-           let entity: Entity = commands.spawn((
-               Mesh3d(handle),
-               MeshMaterial3d(shared_materials.white_matl.clone()),
-               MeshPipeStright{
-                   t,
-               },
-               Transform::default(),
-           )).observe(on_mouse_button_click).id();
-   });
-   load_mesh_centerline(&lraclr_arr, &mut meshes, &mut commands, &shared_materials, &mut lines_materials, &mut ui_state, &mut bend_commands);*/
+    re_load_mesh(&mut meshes,
+                 &mut commands,
+                 &shared_materials,
+                 &mut lines_materials,
+                 &mut ui_state,
+                 &mut bend_commands,
+                 query_meshes_stright,
+                 query_meshes,
+                 query_centerlines);
 }
 
 fn on_mouse_button_click(
@@ -684,36 +585,6 @@ fn on_mouse_button_click(
 }
 
 
-/*fn animate_simple(
-    time: Res<Time>,
-    mut query: Query<(&mut Transform, &Name, &mut SimpleAnimation)>,
-) {
-    for (mut transform, name, mut animation) in &mut query {
-        if (animation.duration != 0.0) {
-            animation.elapsed += time.delta_secs();
-            // Loop the animation
-
-
-            // Calculate progress (0.0 to 1.0)
-            let progress = animation.elapsed / animation.duration;
-
-            // Use smooth step for easing
-            let t = smooth_step(progress);
-
-
-            // Interpolate position
-            transform.translation.x = animation.start_pos_x.lerp(animation.end_pos_x, t);
-            println!("{:?}", transform.translation.x);
-            if animation.elapsed > animation.duration {
-                animation.elapsed = 0.0;
-                animation.duration = 0.0;
-                transform.translation.x = animation.end_pos_x;
-                animation.start_pos_x = transform.translation.x;
-                //animation.start_pos_x = transform.translation.x;
-            }
-        }
-    }
-}*/
 
 
 
@@ -743,7 +614,7 @@ fn event_listener_system(
 ) {
     // The .read() method iterates through all events of this type
     for event in events.read() {
-        let delta_rot: f64 = 1.0;
+        let delta_rot: f64 = 6.0;
 
         let lraclr_arr = &bend_commands.straight;
         let (pt, xv, yv, zv, rot_deg, id,cp,l) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
@@ -884,13 +755,9 @@ fn event_listener_system(
 
     }
 }
-
-
 fn smooth_step(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
-
-
 fn load_icon() -> Icon {
     // Load your icon image here (example uses a small embedded image)
     let icon_buf = include_bytes!("../assets/icons/img.png");
@@ -898,3 +765,4 @@ fn load_icon() -> Icon {
     let icon: Icon = Icon::from_rgba(image.to_vec(), image.width(), image.height()).unwrap();
     icon
 }
+
