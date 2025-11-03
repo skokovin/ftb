@@ -389,6 +389,244 @@ pub fn ui_system(mut contexts: EguiContexts,
                 ui.separator();
             });
             ui.separator();
+
+
+            let mut is_changed = false;
+
+            let mut counter: i32 = 0;
+            let mut deleted_index: i32 = 0;
+            let mut add_index: i32 = -1;
+            let last_index = bend_commands.straight.len() as i32 - 1;
+
+            for lra_item in &mut ui_state.lrauis {
+                let color_white: Color32 = egui::Color32::from_rgb(255, 255, 255);
+                let color_l: Color32 = {
+                    if (lra_item.id1 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
+                    }
+                };
+                let color_r: Color32 = {
+                    if (lra_item.id2 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
+                    }
+                };
+                let color_a: Color32 = {
+                    if (lra_item.id2 == bend_commands.id as i32) {
+                        egui::Color32::from_rgb(255, 0, 0)
+                    } else {
+                        egui::Color32::from_rgb(255, 255, 255)
+                    }
+                };
+
+
+                ui.horizontal(|ui| {
+                    let l_labl = ui.add_sized([col_width, ui.available_height()], egui::TextEdit::singleline(&mut lra_item.l).text_color(color_l));
+
+                    if (l_labl.clicked()) {
+                        query_pipes.iter_mut().for_each(|(mut m, pipe)| {
+                            match pipe {
+                                MainPipe::Pipe(pipe) => {
+                                    if (lra_item.id1 == pipe.id as i32) {
+                                        m.0 = shared_materials.pressed_matl.clone();
+                                    } else {
+                                        m.0 = shared_materials.white_matl.clone();
+                                    }
+                                }
+                                MainPipe::Tor(tor) => {
+                                    m.0 = shared_materials.red_matl.clone();
+                                }
+                            };
+                        });
+                    }
+
+                    if (l_labl.changed() && is_signed_number(lra_item.l.as_str())) {
+                        is_changed = true;
+                    }
+
+                    ui.separator();
+                    let r_labl = ui.add_sized([col_width, ui.available_height()], egui::TextEdit::singleline(&mut lra_item.r).text_color(color_r));
+
+                    if (r_labl.changed() && is_signed_number(lra_item.r.as_str())) {
+                        is_changed = true;
+                    }
+
+                    ui.separator();
+                    let a_labl = ui.add_sized([col_width, ui.available_height()], egui::TextEdit::singleline(&mut lra_item.a).text_color(color_a));
+
+                    if (a_labl.clicked()) {
+                        query_pipes.iter_mut().for_each(|(mut m, pipe)| {
+                            match pipe {
+                                MainPipe::Pipe(pipe) => {
+                                    m.0 = shared_materials.white_matl.clone();
+                                }
+                                MainPipe::Tor(tor) => {
+                                    if (lra_item.id2 == tor.id as i32) {
+                                        m.0 = shared_materials.pressed_matl.clone();
+                                    } else {
+                                        m.0 = shared_materials.red_matl.clone();
+                                    }
+                                }
+                            };
+                        });
+                    }
+
+                    if (a_labl.changed() && is_signed_number(lra_item.a.as_str())) {
+                        is_changed = true;
+                    }
+
+                    ui.separator();
+                    ui.add_sized([col_width, ui.available_height()], egui::Label::new(egui::RichText::new(&lra_item.bend_l).color(color_white)));
+                    ui.separator();
+
+                    let clr_labl = ui.add_sized([col_width, ui.available_height()], egui::TextEdit::singleline(&mut lra_item.clr).text_color(color_white));
+                    if (clr_labl.changed() && is_signed_number(lra_item.clr.as_str())) {
+                        is_changed = true;
+                    }
+
+                    ui.separator();
+
+                    let is_add_button_disabled = if (counter != last_index) { true } else { false };
+                    let add_button = ui.add_enabled(is_add_button_disabled, egui::Button::new("+"));
+                    if (add_button.clicked()) {
+                        add_index = counter;
+                    }
+
+                    let is_delete_button_disabled = if (counter != 0 && last_index >= 2 && counter != last_index)
+                    { true } else { false };
+                    let delete_button = ui.add_enabled(is_delete_button_disabled, egui::Button::new("x"));
+                    if (delete_button.clicked()) {
+                        deleted_index = counter;
+                    }
+                });
+
+                counter = counter + 1;
+            }
+
+            if (is_changed) {
+                 let lraclr_arr: Vec<LRACLR> = ui_state.to_lraclr().clone();
+                bend_commands.straight = lraclr_arr;
+                     re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                                  query_meshes,
+                                  query_centerlines);
+            }
+
+            if (deleted_index != 0) {
+
+                let new_commands = delete_lra_row(deleted_index, &bend_commands.straight);
+                ui_state.update(&new_commands);
+                bend_commands.straight = new_commands;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
+            }
+
+            if (add_index != -1) {
+                let new_commands = add_lra_row(add_index, &bend_commands.straight);
+                ui_state.update(&new_commands);
+                bend_commands.straight = new_commands;
+                re_load_mesh(&mut meshes,
+                             &mut commands,
+                             &shared_materials,
+                             &mut lines_materials,
+                             &mut ui_state,
+                             &mut bend_commands,
+                             query_meshes_stright,
+                             query_meshes,
+                             query_centerlines);
+            }
+
+
+        });
+        if (new_diameter < f64::MAX) {
+            let mut new_lra = bend_commands.straight.clone();
+            new_lra.iter_mut().for_each(|lra| {
+                lra.pipe_radius = new_diameter;
+            });
+            for (entity, _) in &mut query_meshes {
+                commands.entity(entity).despawn();
+            }
+            for (entity, _) in &mut query_meshes_stright {
+                commands.entity(entity).despawn();
+            }
+            for (entity, _) in &mut query_centerlines {
+                commands.entity(entity).despawn();
+            }
+            ui_state.update(&new_lra);
+            bend_commands.straight = new_lra;
+            re_load_mesh(&mut meshes,
+                         &mut commands,
+                         &shared_materials,
+                         &mut lines_materials,
+                         &mut ui_state,
+                         &mut bend_commands,
+                         query_meshes_stright,
+                         query_meshes,
+                         query_centerlines);
+        }
+        ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
+    }).response.rect.width();
+   /* occupied_screen_space.left = egui::SidePanel::left("left_panel").resizable(true).show(ctx, |ui| {
+        if (!is_cam_fixed) { is_cam_fixed = ui.rect_contains_pointer(ui.max_rect()); }
+        let col_width = 50.0;
+        let col_heigth = 8.0;
+        let mut new_diameter = f64::MAX;
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.horizontal(|ui| {
+
+                // ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+
+                let color = egui::Color32::from_rgb(255, 255, 255);
+                let L = format!("Total len {} mm. ", ui_state.total_length);
+                ui.label(egui::RichText::new(L).color(color));
+                ui.label(egui::RichText::new("Pipe D= ").color(color));
+                let radius_labl = ui.add(egui::TextEdit::singleline(&mut ui_state.pipe_diameter).text_color(color));
+                if (radius_labl.changed() && is_signed_number(ui_state.pipe_diameter.as_str())) {
+                    new_diameter = f64::from_str(ui_state.pipe_diameter.as_str()).unwrap();
+                }
+                // });
+
+            });
+            ui.horizontal(|ui| {
+                let color = egui::Color32::from_rgb(255, 255, 255);
+                ui.add_sized([col_width, col_heigth],
+                             egui::Label::new(egui::RichText::new("L").color(color)),
+                );
+                ui.separator();
+                ui.add_sized([col_width, col_heigth],
+                             egui::Label::new(egui::RichText::new("R").color(color)),
+                );
+                ui.separator();
+                ui.add_sized([col_width, col_heigth],
+                             egui::Label::new(egui::RichText::new("A").color(color)),
+                );
+                ui.separator();
+                ui.add_sized([col_width, col_heigth],
+                             egui::Label::new(egui::RichText::new("Bend L").color(color)),
+                );
+                ui.separator();
+                ui.add_sized([col_width, col_heigth],
+                             egui::Label::new(egui::RichText::new("Bend R").color(color)),
+                );
+                ui.separator();
+            });
+            ui.separator();
             let mut seleced_id: i32 = {
                 match bend_commands.anim_state.status {
                     AnimStatus::Enabled => {
@@ -517,17 +755,27 @@ pub fn ui_system(mut contexts: EguiContexts,
             }
 
             if (is_changed) {
+                for (entity, _) in &mut query_meshes {
+                    commands.entity(entity).despawn();
+                }
+                for (entity, _) in &mut query_meshes_stright {
+                    commands.entity(entity).despawn();
+                }
+                for (entity, _) in &mut query_centerlines {
+                    commands.entity(entity).despawn();
+                }
+
                 let lraclr_arr: Vec<LRACLR> = ui_state.to_lraclr().clone();
                 bend_commands.straight = lraclr_arr;
-                     re_load_mesh(&mut meshes,
+                re_load_mesh(&mut meshes,
                              &mut commands,
                              &shared_materials,
                              &mut lines_materials,
                              &mut ui_state,
                              &mut bend_commands,
                              query_meshes_stright,
-                                  query_meshes,
-                                  query_centerlines);
+                             query_meshes,
+                             query_centerlines);
             }
 
             if (deleted_index != 0) {
@@ -609,7 +857,12 @@ pub fn ui_system(mut contexts: EguiContexts,
                          query_centerlines);
         }
         ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
-    }).response.rect.width();
+    }).response.rect.width();*/
+
+
+
+
+
     occupied_screen_space.bottom =egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
         let icon = if bend_commands.is_paused {
             egui_material_icons::icons::ICON_PLAY_ARROW
@@ -662,7 +915,8 @@ pub fn ui_system(mut contexts: EguiContexts,
             orbit: false,
             zoom: false,
         };
-    } else {
+    }
+    else {
         let mut c = d3_camera.single_mut().unwrap();
         c.enabled_motion = EnabledMotion {
             pan: true,
@@ -913,14 +1167,44 @@ fn delete_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
     let mut v: Vec<LRACLR> = vec![];
     let mut counter = 0;
     lraclr.iter().for_each(|lra| {
-        counter = counter + 1;
         if (counter != row_index) {
             v.push(lra.clone());
         }
+        counter = counter + 1;
+    });
+    counter = 0;
+    v.iter_mut().for_each(|lra| {
+        lra.id1=counter;
+        counter=counter+1;
+        lra.id2=counter;
+        counter=counter+1;
     });
     v
 }
 fn add_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
+    let mut v: Vec<LRACLR> = vec![];
+    let mut counter = 0;
+    lraclr.iter().for_each(|lra| {
+        if (counter != row_index) {
+            v.push(lra.clone());
+        }else{
+            v.push(lra.clone());
+            v.push(lra.clone());
+        }
+        counter = counter + 1;
+    });
+    counter = 0;
+    v.iter_mut().for_each(|lra| {
+        lra.id1=counter;
+        counter=counter+1;
+        lra.id2=counter;
+        counter=counter+1;
+    });
+    v
+}
+
+
+fn add_lra_row_old(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
     let mut v: Vec<LRACLR> = vec![];
     let mut counter = 0;
     let mut curr_id1 = 0;
