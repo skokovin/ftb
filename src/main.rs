@@ -187,7 +187,7 @@ fn main() {
                 .add_systems(PostStartup, after_setup_scene)
                 .add_systems(Update, (update_camera_transform_system, animate_simple))*/
 
-        .add_systems(Startup, (setup_scene_utils, setup_drawings_layer,setup_machine))
+        .add_systems(Startup, (setup_scene_utils,setup_machine, setup_drawings_layer.after(setup_machine)))
         .add_systems(PostStartup, (after_setup_scene,))
         .add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
         .run();
@@ -307,6 +307,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         )
     );
+
     commands.spawn(
         (
             dayamam_kizak,
@@ -320,7 +321,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         )
     );
-    commands.spawn(
+   commands.spawn(
         (
             dayama_alt,
             MachinePart{},
@@ -348,7 +349,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
         )
     );
 
-    commands.spawn(
+   commands.spawn(
         (
             mengene,
             MachinePart{},
@@ -394,7 +395,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             pens,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new( 463.0, -289.37, -154.89), //Vec3::new(-3058.0, -289.37, -154.89) -3676.293 463.0
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -522,6 +523,7 @@ fn setup_drawings_layer(
     mut query_meshes_stright: Query<(Entity, &MeshPipeStright)>,
     mut query_meshes: Query<(Entity, &MeshPipe)>,
     mut query_centerlines: Query<(Entity, &PipeCenterLine)>,
+    mut query_transform_machine: Query<(&mut Transform, Option<&MachinePart>, Option<&Name>)>
 ) {
    //let stp: Vec<u8> = Vec::from((include_bytes!("files/6.stp")).as_slice());
     let stp: Vec<u8> = Vec::from((include_bytes!("files/9.stp")).as_slice());
@@ -536,7 +538,7 @@ fn setup_drawings_layer(
                  &mut bend_commands,
                  query_meshes_stright,
                  query_meshes,
-                 query_centerlines);
+                 query_centerlines,&mut query_transform_machine);
 }
 
 fn on_mouse_button_click(
@@ -607,7 +609,20 @@ fn event_listener_system(
     query_testlines: Query<(Entity, &TestLines)>,
     mut lines_materials: ResMut<Assets<LineMaterial>>,
     mut bend_commands: ResMut<BendCommands>,
-    mut query_transform_main_pipe: Query<(&mut Transform, Option<&MeshPipe>, Option<&PipeCenterLine>, Option<&MeshPipeStright>),Or<(With<MeshPipe>, With<PipeCenterLine>, With<MeshPipeStright>)>>,
+/*    mut query_transform_main_pipe: Query<(&mut Transform,
+                                          Option<&MeshPipe>,
+                                          Option<&PipeCenterLine>,
+                                          Option<&MeshPipeStright>
+    ),
+        Or<(With<MeshPipe>, With<PipeCenterLine>, With<MeshPipeStright>)>>,*/
+
+    mut query_transform_main_pipe: Query<(&mut Transform,
+                                          Option<&MeshPipe>,
+                                          Option<&PipeCenterLine>,
+                                          Option<&MeshPipeStright>,
+                                          Option<&MachinePart>,
+                                          Option<&Name>
+    )>,
 
     mut query_visibility: Query<(&mut Visibility,Option<&MeshPipe>, Option<&MeshPipeStright>, Option<&MachinePart>, Option<&PipeCenterLine>)>,
 
@@ -619,6 +634,8 @@ fn event_listener_system(
         let lraclr_arr = &bend_commands.straight;
         let (pt, xv, yv, zv, rot_deg, id,cp,l) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
         let dx = bend_commands.t*l;
+        let last_dx = l - bend_commands.t*l;
+        println!("l {:?}", l);
 
         bend_commands.id = id;
 
@@ -680,8 +697,10 @@ fn event_listener_system(
         let rot_matrix: Mat3 = x_rotation * x_mirror * z_mirror * m_dest * m_source.transpose();
         let final_transform_matrix = Mat4::from_mat3(rot_matrix) * Mat4::from_translation(dest_pos);
 
-        query_transform_main_pipe.iter_mut().for_each(|(mut transform, mesh_pipe, pipe_center_line, mesh_pipe_stright)| {
-           match mesh_pipe {
+        query_transform_main_pipe.iter_mut().for_each(|(mut transform, mesh_pipe, pipe_center_line,mesh_pipe_stright, mesh_machine_part, name)| {
+
+
+            match mesh_pipe {
                None => {}
                Some(_) => {
                    *transform = Transform::from_matrix(final_transform_matrix);
@@ -699,6 +718,27 @@ fn event_listener_system(
                 None => {}
                 Some(_) => {
                     transform.translation.x = dx as f32;
+                }
+            }
+
+            match mesh_machine_part {
+                None => {}
+                Some(mp) => {
+
+                    match name {
+                        None => {}
+                        Some(n) => {
+                            match n.as_str() {
+                                "pens"=>{
+                                    transform.translation.x = -last_dx as f32+463.0;
+                                    println!("pens {:?}", transform.translation.x);
+                                }
+                                &_ => {}
+                            }
+                        }
+                    }
+
+
                 }
             }
 
