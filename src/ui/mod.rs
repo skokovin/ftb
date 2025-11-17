@@ -733,7 +733,7 @@ pub fn interpolate_by_t(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Vec<(Mesh
     for ti in 1..step {
         let t = ti as f64 / step as f64;
 
-        let ( (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, l)) = byt(t, cmnd, up_dir);
+        let ( (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, l,theta)) = byt(t, cmnd, up_dir);
         let mesh = triangulate_pipe(&pt_a, &pt, &cp, pipe_radius, num_segments);
         ret.push((mesh, ti, id));
         pt_a = pt;
@@ -745,7 +745,7 @@ pub fn interpolate_by_t(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Vec<(Mesh
     (ret, ret2)
 }
 
-pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, f64, u64, Option<Point3<f32>>, f64) {
+pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, Vector3<f64>, Vector3<f64>, Vector3<f64>, f64, u64, Option<Point3<f32>>, f64, f64) {
     let len: f64 = tot_pipe_len(cmnd);
     let dist = len * t;
     let mut id: u64 = 0;
@@ -759,6 +759,7 @@ pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, V
     let mut pt: Point3<f64> = Point3::new(0.0, 0.0, 0.0);
     let mut rot_deg = 0.0;
     let mut cp: Option<Point3<f32>> = None;
+    let mut theta: f64=0.0;
 
     for i in (0..indexes).step_by(2) {
         match circles.iter().find(|cil| cil.id == i as u64) {
@@ -810,7 +811,7 @@ pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, V
                                 let v2: Vector3<f64> = arc.cb.loc.sub(arc.bend_center_point);
                                 let total_angle: f64 = (v1.dot(v2) / (v1.magnitude() * v2.magnitude())).acos();
                                 let total_arc_length: f64 = total_angle * arc.bend_radius;
-                                let theta = offset / arc.bend_radius;
+                                theta = offset / arc.bend_radius;
                                 let axis = v1.cross(v2);
                                 let normalized_axis = axis.normalize();
                                 let v_target = v1 * theta.cos() + normalized_axis.cross(v1) * theta.sin();
@@ -829,7 +830,7 @@ pub fn byt(t: f64, cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Point3<f64>, V
         };
     }
 
-    (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, len)
+    (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, len,theta)
 }
 
 pub fn load_mesh_centerline(

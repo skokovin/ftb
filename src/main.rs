@@ -20,7 +20,7 @@ use bevy_editor_cam::DefaultEditorCamPlugins;
 use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
 use bevy_egui::{  EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,};
 use bevy_http_client::{HttpClientPlugin};
-use cgmath::{ Vector3};
+use cgmath::{Deg, InnerSpace, Quaternion, Rad, Rotation3, Vector3};
 use ruststep::itertools::Itertools;
 use winit::window::Icon;
 use crate::adds::line::{LineList, LineMaterial};
@@ -61,6 +61,11 @@ struct TestLines;
 struct MeshPipe{
     t:i64
 }
+
+#[derive(Component, Clone)]
+struct RotationAxes;
+
+
 #[derive(Component, Clone)]
 struct MeshPipeStright{
     t:i64
@@ -68,6 +73,10 @@ struct MeshPipeStright{
 
 #[derive(Component, Clone)]
 struct MachinePart{}
+#[derive(Component, Clone)]
+struct MachinePartRotated{
+     original_pos:  Transform
+}
 
 
 #[derive(Resource, Deref, DerefMut)]
@@ -141,6 +150,13 @@ struct MachineAssets {
 
 
 fn main() {
+    let TR=Transform {
+        translation: Vec3::new(-3058.0, -289.37, -154.89-50.2819), //Vec3::new(289.37, -3058.0, -154.89)
+        rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
+        scale: Vec3::new(1000.0, 1000.0, 1000.0),
+    };
+
+
     let vis_stor = VisibilityStore {
         visible_roots: vec![],
     };
@@ -187,7 +203,7 @@ fn main() {
                 .add_systems(PostStartup, after_setup_scene)
                 .add_systems(Update, (update_camera_transform_system, animate_simple))*/
 
-        .add_systems(Startup, (setup_scene_utils,setup_machine, setup_drawings_layer.after(setup_machine)))
+        .add_systems(Startup, (setup_rot_axes_utils,setup_scene_utils,setup_machine, setup_drawings_layer.after(setup_machine)))
         .add_systems(PostStartup, (after_setup_scene,))
         .add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
         .run();
@@ -276,8 +292,11 @@ fn setup_scene(mut commands: Commands,
 
 
 fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let t: Transform = Transform {
-        translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+
+    let dz=130.0;
+
+    let rotated_orig_pos= Transform{
+        translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
         rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
         scale: Vec3::new(1000.0, 1000.0, 1000.0),
     };
@@ -299,7 +318,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             dayamam_kizak_arka,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -313,7 +332,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             dayamam_kizak,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -326,7 +345,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             dayama_alt,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -338,9 +357,11 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.spawn(
         (
             mengene_alt,
-            MachinePart{},
+            MachinePartRotated{
+                original_pos: rotated_orig_pos,
+            },
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-50.2819), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -352,9 +373,11 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
    commands.spawn(
         (
             mengene,
-            MachinePart{},
+            MachinePartRotated{
+                original_pos: rotated_orig_pos,
+            },
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-50.2819), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -367,7 +390,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             palka2m,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -381,7 +404,7 @@ fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
             palkam,
             MachinePart{},
             Transform {
-                translation: Vec3::new(-3058.0, -289.37, -154.89), //Vec3::new(289.37, -3058.0, -154.89)
+                translation: Vec3::new(-3058.0, -289.37, -154.89-dz), //Vec3::new(289.37, -3058.0, -154.89)
                 rotation: Quat::from_rotation_y(std::f32::consts::PI) * Quat::from_rotation_z(std::f32::consts::PI / 2.0),
                 scale: Vec3::new(1000.0, 1000.0, 1000.0),
             },
@@ -513,6 +536,44 @@ fn setup_scene_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, m
     ));
 }
 
+fn setup_rot_axes_utils(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut lines_materials: ResMut<Assets<LineMaterial>>) {
+    let l = 100.0;
+    //let pos: Transform =Transform::from_translation(Vec3::new(90.3719, 365.8858, 3058.0));
+    let pos: Transform =Transform::from_translation(Vec3::new(0.0, -289.37+90.3719, -154.89+365.8858));
+    //let pos: Transform =Transform::from_translation(Vec3::new(50.3719, 50.8858, 50.0));
+     commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: vec![(Vec3::ZERO, Vec3::new(1.0 * l, 0.0, 0.0))],
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::GREEN,
+        })),
+        RotationAxes,
+        pos,
+    ));
+
+    commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 1.0 * l, 0.0))],
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::RED,
+        })),
+        RotationAxes,
+        pos,
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(LineList {
+            lines: vec![(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0 * l))],
+        })),
+        MeshMaterial3d(lines_materials.add(LineMaterial {
+            color: LinearRgba::BLUE,
+        })),
+        RotationAxes,
+        pos,
+    ));
+}
+
 fn setup_drawings_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -621,6 +682,8 @@ fn event_listener_system(
                                           Option<&PipeCenterLine>,
                                           Option<&MeshPipeStright>,
                                           Option<&MachinePart>,
+                                          Option<&MachinePartRotated>,
+                                          Option<&RotationAxes>,
                                           Option<&Name>
     )>,
 
@@ -630,12 +693,27 @@ fn event_listener_system(
     // The .read() method iterates through all events of this type
     for event in events.read() {
         let delta_rot: f64 = 6.0;
+        let t_increment = 0.001;
 
         let lraclr_arr = &bend_commands.straight;
-        let (pt, xv, yv, zv, rot_deg, id,cp,l) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
+        let (pt, xv, yv, zv, rot_deg, id,cp,l,theta) = byt(bend_commands.t, lraclr_arr, &bend_commands.up_dir);
+
+        let t_increment ={
+            if(theta==0.0){
+                0.001
+            }else{
+                0.0001
+            }
+        } ;
+
+
+        let test_y:Vector3<f64>= Vector3::new(0.0, 1.0, 0.0);
+
+        let angle=Deg::from(test_y.angle(yv));
+        println!("angle {:?}", Deg::from(Rad(theta)));
+
         let dx = bend_commands.t*l;
         let last_dx = l - bend_commands.t*l;
-        println!("l {:?}", l);
 
         bend_commands.id = id;
 
@@ -660,7 +738,7 @@ fn event_listener_system(
             //bend_commands.is_paused=true;
         }
         if (!bend_commands.is_paused) {
-            bend_commands.t += 0.001 * bend_commands.direction;
+            bend_commands.t += t_increment * bend_commands.direction;
         }
 
         let mut x_rotation = Mat3::from_cols(
@@ -697,7 +775,14 @@ fn event_listener_system(
         let rot_matrix: Mat3 = x_rotation * x_mirror * z_mirror * m_dest * m_source.transpose();
         let final_transform_matrix = Mat4::from_mat3(rot_matrix) * Mat4::from_translation(dest_pos);
 
-        query_transform_main_pipe.iter_mut().for_each(|(mut transform, mesh_pipe, pipe_center_line,mesh_pipe_stright, mesh_machine_part, name)| {
+        query_transform_main_pipe.iter_mut().for_each(|(mut transform,
+                                                           mesh_pipe,
+                                                           pipe_center_line,
+                                                           mesh_pipe_stright,
+                                                           mesh_machine_part,
+                                                           mesh_machine_part_rotated,
+                                                           rot_axes,
+                                                           name)| {
 
 
             match mesh_pipe {
@@ -731,7 +816,6 @@ fn event_listener_system(
                             match n.as_str() {
                                 "pens"=>{
                                     transform.translation.x = -last_dx as f32+463.0;
-                                    println!("pens {:?}", transform.translation.x);
                                 }
                                 &_ => {}
                             }
@@ -742,7 +826,27 @@ fn event_listener_system(
                 }
             }
 
+            match rot_axes{
+                None => {}
+                Some(ra) => {
+                    let axis = Vec3::Z;
+                    let rotation = Quat::from_axis_angle(axis, -theta as f32);
+                    let pivot_point = Vec3::new(0.0, -289.37+90.3719, -154.89+365.8858);
+                    *transform =Transform::from_translation(Vec3::new(0.0, -289.37+90.3719, -154.89+365.8858));
+                    transform.rotate_around(pivot_point, rotation);
+                }
+            }
 
+            match mesh_machine_part_rotated{
+                None => {}
+                Some(ra) => {
+                    let axis = Vec3::Z;
+                    let rotation = Quat::from_axis_angle(axis, -theta as f32);
+                    let pivot_point = Vec3::new(0.0, -289.37+90.3719, -154.89+365.8858);
+                    *transform =ra.original_pos;
+                    transform.rotate_around(pivot_point, rotation);
+                }
+            }
         });
         // 2. Iterate over the query results
         for (mut visibility, pipe, mesh_pipe_stright,machine_part,center_line) in query_visibility.iter_mut() {
