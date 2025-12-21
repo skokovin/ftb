@@ -1,6 +1,6 @@
 [package]
 name = "ftb"
-version = "19.0.3"
+version = "19.0.4"
 edition = "2024"
 
 [profile.release]
@@ -40,14 +40,17 @@ truck-meshalgo = { git = "https://github.com/ricosjp/truck.git" }
 truck-stepio = { git = "https://github.com/ricosjp/truck.git" }
 #egui_alignments = "0.3.4"
 egui_material_icons = "0.5.0"
-bevy = "0.17.2"
-bevy_ecs = "0.17.2"
-bevy_editor_cam = { path = "d:/rustproj2/bevy_editor_cam" }
+bevy = "0.17.3"
+bevy_ecs = "0.17.3"
+#bevy_editor_cam = { path = "d:/rustproj2/bevy_editor_cam" }
+#bevy_editor_cam = { git = "https://github.com/aevyrie/bevy_editor_cam.git" }
+
+
 bevy_http_client = "0.9.0"
-bevy_egui = "0.38.0"
-rfd = "0.15.4"
+bevy_egui = "0.38.1"
+rfd = "0.16.0"
 chrono = "0.4.42"
-image = "0.25.8"
+image = "0.25.9"
 winit = "0.30.12"
 regex = "1.12.2"
 glam = "0.30.9"

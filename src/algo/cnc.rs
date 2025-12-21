@@ -406,16 +406,16 @@ pub fn all_to_stp(cyls: &Vec<MainCylinder>, tors: &Vec<BendToro>) -> Vec<u8> {
     tors.iter().for_each(|t| {
         let p = t.ca.loc + t.ca.radius_dir * t.r;
         let vertex1 = builder::vertex(p);
-        let circle = builder::rsweep(&vertex1, t.ca.loc, t.ca.dir, Rad(7.0));
+        let circle = builder::rsweep(&vertex1, t.ca.loc, t.ca.dir, Rad(7.0),2);
         let disk = builder::try_attach_plane(&[circle]).unwrap();
-        let solid: truck_topology::Solid<Point3, Curve, Surface> = builder::rsweep(&disk, t.bend_center_point, t.bend_plane_norm, t.angle());
+        let solid: truck_topology::Solid<Point3, Curve, Surface> = builder::rsweep(&disk, t.bend_center_point, t.bend_plane_norm, t.angle(),2);
         let shells_loc: Vec<truck_topology::Shell<Point3, Curve, Surface>> = solid.into_boundaries();
         shells.extend(shells_loc);
     });
     cyls.iter().for_each(|c| {
         let p = c.ca.loc + c.ca.radius_dir * c.r;
         let vertex1 = builder::vertex(p);
-        let circle = builder::rsweep(&vertex1, c.ca.loc, c.ca.dir, Rad(7.0));
+        let circle = builder::rsweep(&vertex1, c.ca.loc, c.ca.dir, Rad(7.0),2);
         let disk = builder::try_attach_plane(&[circle]).unwrap();
         let v = c.ca.dir.mul(c.h);
         let solid = builder::tsweep(&disk, v);

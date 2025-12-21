@@ -1,3 +1,5 @@
+pub mod camera;
+
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -21,7 +23,7 @@ use bevy_ecs::change_detection::{Res, ResMut};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::name::Name;
 use bevy_ecs::prelude::{Commands, Query};
-use bevy_editor_cam::prelude::{EditorCam, EnabledMotion};
+
 use bevy_egui::{egui, EguiContexts};
 use bevy_egui::egui::{Color32, TextStyle};
 use cgmath::num_traits::abs;
@@ -29,6 +31,7 @@ use cgmath::{Deg, InnerSpace, Point3, Rad, Vector3};
 use chrono::NaiveDate;
 use image::EncodableLayout;
 use is_odd::IsOdd;
+
 use rfd::FileDialog;
 use regex::Regex;
 use crate::{on_mouse_button_click, BendCommands, MachinePart, MainPipe, MeshPipe, MeshPipeStright, OccupiedScreenSpace, PipeCenterLine, SharedMaterials, VisibilityStore};
@@ -111,7 +114,6 @@ pub fn ui_system(mut contexts: EguiContexts,
                  mut occupied_screen_space: ResMut<OccupiedScreenSpace>,
                  mut commands: Commands,
                  mut ui_state: ResMut<UiState>,
-                 mut d3_camera: Query<&mut EditorCam>,
                  mut visibility_store: ResMut<VisibilityStore>,
                  mut bend_commands: ResMut<BendCommands>,
                  mut query_pipes: Query<(&mut MeshMaterial3d<StandardMaterial>, &MainPipe)>,
@@ -149,34 +151,37 @@ pub fn ui_system(mut contexts: EguiContexts,
         ui.horizontal_wrapped(|ui| {
             if ui.button("File").clicked() {
                 if (test_date()) {
-                    if let Some(path) = rfd::FileDialog::new().add_filter("STEP", &["stp", "step"]).pick_file() {
-                        match fs::read(path) {
-                            Ok(stp) => {
-                                for (entity, _) in &mut query_meshes {
-                                    commands.entity(entity).despawn();
+
+                        if let Some(path) = rfd::FileDialog::new().add_filter("STEP", &["stp", "step"]).pick_file() {
+                            match fs::read(path) {
+                                Ok(stp) => {
+                                    for (entity, _) in &mut query_meshes {
+                                        commands.entity(entity).despawn();
+                                    }
+                                    for (entity, _) in &mut query_meshes_stright {
+                                        commands.entity(entity).despawn();
+                                    }
+                                    for (entity, _) in &mut query_centerlines {
+                                        commands.entity(entity).despawn();
+                                    }
+                                    let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
+                                    bend_commands.straight = lraclr_arr;
+                                    bend_commands.original_file = stp;
+                                    re_load_mesh(&mut meshes,
+                                                 &mut commands,
+                                                 &shared_materials,
+                                                 &mut lines_materials,
+                                                 &mut ui_state,
+                                                 &mut bend_commands,
+                                                 query_meshes_stright,
+                                                 query_meshes,
+                                                 query_centerlines,&mut query_transform_machine);
                                 }
-                                for (entity, _) in &mut query_meshes_stright {
-                                    commands.entity(entity).despawn();
-                                }
-                                for (entity, _) in &mut query_centerlines {
-                                    commands.entity(entity).despawn();
-                                }
-                                let lraclr_arr: Vec<LRACLR> = analyze_stp(&stp);
-                                bend_commands.straight = lraclr_arr;
-                                bend_commands.original_file = stp;
-                              re_load_mesh(&mut meshes,
-                                             &mut commands,
-                                             &shared_materials,
-                                             &mut lines_materials,
-                                             &mut ui_state,
-                                             &mut bend_commands,
-                                             query_meshes_stright,
-                                             query_meshes,
-                                             query_centerlines,&mut query_transform_machine);
+                                Err(_) => {}
                             }
-                            Err(_) => {}
                         }
-                    }
+
+
                 }
             };
             ui.separator();
@@ -197,18 +202,22 @@ pub fn ui_system(mut contexts: EguiContexts,
             ui.separator();
 
             if ui.button("CSV").clicked() {
-                if let Some(path) = FileDialog::new().add_filter("CSV", &["csv"]).set_directory("/").save_file() {
-                    save_csv(&bend_commands.straight, &path);
-                    println!("{:?}", path);
-                }
+
+
+                    if let Some(path) = FileDialog::new().add_filter("CSV", &["csv"]).set_directory("/").save_file() {
+                        save_csv(&bend_commands.straight, &path);
+                        println!("{:?}", path);
+                    }
+
+
             }
             ui.separator();
 
             if ui.button("STP").clicked() {
-                if let Some(path) = FileDialog::new().add_filter("STP", &["stp"]).set_directory("/").save_file() {
-                    save_stp(&bend_commands, &path);
-                    println!("{:?}", path);
-                }
+                    if let Some(path) = FileDialog::new().add_filter("STP", &["stp"]).set_directory("/").save_file() {
+                        save_stp(&bend_commands, &path);
+                        println!("{:?}", path);
+                    }
             }
             ui.separator();
 
@@ -621,21 +630,7 @@ pub fn ui_system(mut contexts: EguiContexts,
             );
         });
     }).response.rect.width();
-    if (is_cam_fixed) {
-        let mut c = d3_camera.single_mut().unwrap();
-        c.enabled_motion = EnabledMotion {
-            pan: false,
-            orbit: false,
-            zoom: false,
-        };
-    } else {
-        let mut c = d3_camera.single_mut().unwrap();
-        c.enabled_motion = EnabledMotion {
-            pan: true,
-            orbit: true,
-            zoom: true,
-        };
-    };
+
 }
 
 pub fn re_load_mesh(

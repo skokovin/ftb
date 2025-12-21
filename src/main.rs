@@ -16,8 +16,7 @@ use bevy::window::{ PrimaryWindow};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::name::Name;
 use bevy_ecs::prelude::{ContainsEntity,  };
-use bevy_editor_cam::DefaultEditorCamPlugins;
-use bevy_editor_cam::prelude::{projections, EditorCam, EnabledMotion, OrbitConstraint};
+
 use bevy_egui::{  EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass,};
 use bevy_http_client::{HttpClientPlugin};
 use cgmath::{Deg, InnerSpace, Quaternion, Rad, Rotation3, Vector3};
@@ -29,8 +28,11 @@ use crate::algo::cnc::{ AnimState,  LRACLR};
 use crate::ui::{byt, re_load_mesh, ui_system, UiState};
 
 use bevy::prelude::*;
+use bevy::render::RenderPlugin;
+use bevy::render::settings::{Backends, WgpuSettings, WgpuSettingsPriority};
 use bevy::render::view::Hdr;
 use is_odd::IsOdd;
+use crate::ui::camera::{cad_camera_controller, CadCamera};
 
 mod algo;
 mod ui;
@@ -181,16 +183,30 @@ fn main() {
             Duration::from_millis(30),
             TimerMode::Repeating, // Make the timer repeat
         ))).add_plugins((
-        DefaultPlugins.set(WindowPlugin {
+        DefaultPlugins.set(
+            WindowPlugin {
             primary_window: Some(Window {
                 title: "Cansa Makina's pipe bend app".to_string(),
                 ..default()
             }),
-            ..default()
-        }),
+
+            ..default() },
+
+  /*          RenderPlugin {
+                render_creation: WgpuSettings {
+                    // 1. Explicitly list WebGPU as a supported backend
+                    backends: Some(Backends::BROWSER_WEBGPU | Backends::BROWSER_WEBGPU),
+                    // 2. Prioritize functionality (WebGPU) over compatibility (WebGL)
+                    priority: WgpuSettingsPriority::Functionality,
+                    ..default()
+                }.into(),
+                synchronous_pipeline_compilation: false,
+                debug_flags: Default::default(),
+
+            }*/
+        ),
         HttpClientPlugin,
         MeshPickingPlugin,
-        DefaultEditorCamPlugins,
         EguiPlugin::default(),
         MaterialPlugin::<LineMaterial>::default(),
     ))
@@ -205,12 +221,76 @@ fn main() {
 
         .add_systems(Startup, (setup_rot_axes_utils,setup_scene_utils,setup_machine, setup_drawings_layer.after(setup_machine)))
         .add_systems(PostStartup, (after_setup_scene,))
-        .add_systems(Update, (tick_timer_system, event_listener_system, update_camera_transform_system,)) //test_system
+        .add_systems(Update, (tick_timer_system, event_listener_system,cad_camera_controller, update_camera_transform_system,)) //test_system
         .run();
 }
 
 
 fn setup_scene(mut commands: Commands,
+               mut materials: ResMut<Assets<StandardMaterial>>,
+               asset_server: Res<AssetServer>,
+) {
+    let diffuse_map: Handle<Image> = asset_server.load("environment_maps/diffuse_rgb9e5_zstd.ktx2");
+    let specular_map: Handle<Image> = asset_server.load("environment_maps/specular_rgb9e5_zstd.ktx2");
+
+    let white_matl: Handle<StandardMaterial> = materials.add(
+        StandardMaterial {
+            base_color: Color::from(BLUE_500), // Deep red color
+            metallic: 0.5,                         // Highly metallic (0.0 to 1.0)
+            perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
+            reflectance: 0.7,                       // How much it reflects its environment
+            ..default()
+        }
+    );
+    let ground_matl: Handle<StandardMaterial> = materials.add(Color::from(GRAY_300));
+    let hover_matl: Handle<StandardMaterial> = materials.add(Color::from(CYAN_300));
+    let pressed_matl: Handle<StandardMaterial> = materials.add(Color::from(YELLOW_300));
+    let red_matl: Handle<StandardMaterial> = materials.add(StandardMaterial {
+        base_color: Color::from(RED_500), // Deep red color
+        metallic: 0.5,                         // Highly metallic (0.0 to 1.0)
+        perceptual_roughness: 0.7,              // Very smooth/polished (0.0 to 1.0)
+        reflectance: 0.7,
+        ..default()
+    });
+    let shm = SharedMaterials {
+        diffuse_map,
+        specular_map,
+        white_matl,
+        ground_matl,
+        hover_matl,
+        pressed_matl,
+        red_matl,
+    };
+    let cam_trans = Transform::from_xyz(3000.0, 0., 3000.0).looking_at(CAMERA_TARGET, Vec3::Z);
+    //let cam_trans =  Transform::from_xyz(0.7, 0.7, 1.0).looking_at(Vec3::new(0.0, 0.3, 0.0), Vec3::Y);
+    commands.insert_resource(OriginalCameraTransform(cam_trans));
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(3000.0, 3000.0, 3000.0)
+            .looking_at(Vec3::ZERO, Vec3::Y),
+        CadCamera {
+            focus_point: Vec3::ZERO, // Смотрим в центр
+            dist: 5000.0,            // Дистанция
+            ..default()
+        },
+        Tonemapping::AcesFitted,
+        Bloom::default(),
+        EnvironmentMapLight {
+            intensity: 3000.0,
+            rotation: Default::default(),
+            diffuse_map: shm.specular_map.clone(),
+            specular_map: shm.specular_map.clone(), //shm.specular_map.clone() diffuse_map
+            affects_lightmapped_mesh_diffuse: false,
+        },
+        //ScreenSpaceAmbientOcclusion::default(),
+       //Smaa::default(),
+       Msaa::Sample4,
+       Hdr,
+    ));
+    commands.insert_resource(shm);
+}
+
+/*fn setup_scene(mut commands: Commands,
                mut materials: ResMut<Assets<StandardMaterial>>,
                asset_server: Res<AssetServer>,
 ) {
@@ -263,16 +343,16 @@ fn setup_scene(mut commands: Commands,
             specular_map: shm.specular_map.clone(), //shm.specular_map.clone() diffuse_map
             affects_lightmapped_mesh_diffuse: false,
         },
-/*             DirectionalLight {
-            illuminance: light_consts::lux::FULL_DAYLIGHT,
-            shadows_enabled: true,
-            ..default()
-        },*/
-/*        CascadeShadowConfigBuilder {
-                 maximum_distance: 3000.0,
-                 first_cascade_far_bound: 900.0,
-                 ..default()
-             }.build(),*/
+        /*             DirectionalLight {
+                    illuminance: light_consts::lux::FULL_DAYLIGHT,
+                    shadows_enabled: true,
+                    ..default()
+                },*/
+        /*        CascadeShadowConfigBuilder {
+                         maximum_distance: 3000.0,
+                         first_cascade_far_bound: 900.0,
+                         ..default()
+                     }.build(),*/
         EditorCam {
             orbit_constraint: OrbitConstraint::Free,
             last_anchor_depth: -cam_trans.translation.length() as f64,
@@ -283,12 +363,12 @@ fn setup_scene(mut commands: Commands,
             ..Default::default()
         },
         //ScreenSpaceAmbientOcclusion::default(),
-       //Smaa::default(),
-       Msaa::Sample4,
-       Hdr,
+        //Smaa::default(),
+        Msaa::Sample4,
+        Hdr,
     ));
     commands.insert_resource(shm);
-}
+}*/
 
 
 fn setup_machine(asset_server: Res<AssetServer>, mut commands: Commands) {
@@ -710,8 +790,7 @@ fn event_listener_system(
         let test_y:Vector3<f64>= Vector3::new(0.0, 1.0, 0.0);
 
         let angle=Deg::from(test_y.angle(yv));
-        println!("angle {:?}", Deg::from(Rad(theta)));
-
+        
         let dx = bend_commands.t*l;
         let last_dx = l - bend_commands.t*l;
 
