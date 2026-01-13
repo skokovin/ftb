@@ -7,11 +7,39 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::pbr::LightEntity::Point;
 use bevy::prelude::Mesh;
+use crate::algo::cnc::{byt, tot_pipe_len, LRACLR};
 
-pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp: &Option<Point3<f32>>, radius:f32, num_segments:u32) -> Mesh{
+pub const T_INCREMENTS: i64=1000;
+pub fn interpolate_by_t(cmnd: &Vec<LRACLR>, up_dir: &Vector3<f64>) -> (Vec<(Mesh, i64, u64)>, Vec<(Mesh, i64, u64)>) {
+    let num_segments = 64;
+    let len: f64 = tot_pipe_len(cmnd);
+    let pipe_radius = cmnd[0].pipe_radius as f32;
+    let mut ret: Vec<(Mesh, i64, u64)> = vec![];
+    let mut ret2: Vec<(Mesh, i64, u64)> = vec![];
+    let step: i64 = T_INCREMENTS;
+    let mut pt_a: Point3<f64> = Point3::new(0.0, 0.0, 0.0);
+    let mut pt_m_a: Point3<f64> = Point3::new(0.0, 0.0, 0.0);
+    for ti in 1..step {
+        let t = ti as f64 / step as f64;
+
+        let ( (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, l,theta, bend_radius)) = byt(t, cmnd, up_dir);
+        let mesh = triangulate_pipe(&pt_a, &pt, &cp, pipe_radius, num_segments);
+        ret.push((mesh, ti, id));
+        pt_a = pt;
+        let pt_m_b: Point3<f64> = Point3::new(-len * t, 0.0, 0.0);
+        let mesh2 = triangulate_pipe(&pt_m_a, &pt_m_b, &None, pipe_radius, num_segments);
+        ret2.push((mesh2, ti, 99999));
+        pt_m_a = pt_m_b;
+    }
+    (ret, ret2)
+}
+
+
+pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp_: &Option<Point3<f64>>, radius:f32, num_segments:u32) -> Mesh{
 
     let pt1: Point3<f32>= Point3::new(pt1_.x as f32, pt1_.y as f32, pt1_.z as f32);
     let pt2: Point3<f32>= Point3::new(pt2_.x as f32, pt2_.y as f32, pt2_.z as f32);
+
 
     let mut vertices: Vec<glam::Vec3> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -20,7 +48,7 @@ pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp: &Option<Poin
     let mut indice:u32=0;
 
     let (up, fwd_a, left_a, fwd_b, left_b)={
-        match cp {
+        match cp_ {
             None => {
                 let fwd1: Vector3<f32> =(pt2-pt1).normalize();
                 let left1= perpendicular_rand_dir(&fwd1).normalize();
@@ -28,7 +56,8 @@ pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp: &Option<Poin
 
                 (up,fwd1.clone(),left1.clone(),fwd1.clone(),left1.clone())
             }
-            Some(center_p) => {
+            Some(cp) => {
+                let center_p: Point3<f32>= Point3::new(cp.x as f32, cp.y as f32, cp.z as f32);
                 let up: Vector3<f32> = {
                     let a = pt1 - center_p;
                     let b = pt2 - center_p;
@@ -125,7 +154,7 @@ pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp: &Option<Poin
         ),
     );
 
-   mesh.insert_attribute(
+    mesh.insert_attribute(
         Mesh::ATTRIBUTE_NORMAL,
         VertexAttributeValues::Float32x3(
             normals.iter().map(|n| [n.x, n.y, n.z]).collect(),
@@ -141,6 +170,7 @@ pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp: &Option<Poin
     mesh
 
 }
+
 
 fn perpendicular_rand_dir(src:&Vector3<f32>)->Vector3<f32>{
     //https://math.stackexchange.com/questions/137362/how-to-find-perpendicular-vector-to-another-vector

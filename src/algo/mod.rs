@@ -1,5 +1,6 @@
 pub mod cnc;
 pub mod triangulation;
+pub mod solids;
 
 use crate::algo::cnc::{gen_cyl, AnimState, LRACLR};
 use cgmath::num_traits::real::Real;

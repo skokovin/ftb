@@ -1,4 +1,4 @@
-use crate::algo::{export_to_pt_str, perpendicular_rand_dir, project_point_to_vec, round_by_dec, BendToro, MainCircle, MainCylinder, DIVIDER, EXTRA_LEN_CALC, EXTRA_R_CALC, P_FORWARD, P_FORWARD_REVERSE, P_RIGHT, P_UP, ROT_DIR_CCW, TOLE};
+pub(crate) use crate::algo::{export_to_pt_str, perpendicular_rand_dir, project_point_to_vec, round_by_dec, BendToro, MainCircle, MainCylinder, DIVIDER, EXTRA_LEN_CALC, EXTRA_R_CALC, P_FORWARD, P_FORWARD_REVERSE, P_RIGHT, P_UP, ROT_DIR_CCW, TOLE};
 
 use cgmath::num_traits::{abs, signum};
 use cgmath::{
@@ -12,11 +12,12 @@ use std::f64::consts::PI;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Mul, Sub};
 use std::sync::atomic::Ordering;
+use bevy::prelude::Reflect;
 use log::warn;
 use truck_base::bounding_box::BoundingBox;
 use truck_base::cgmath64::{Point3, Vector3};
 use truck_stepio::out;
-use crate::BendCommands;
+
 
 
 const L: i32 = 0;
@@ -92,7 +93,7 @@ impl Debug for AnimState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy,  Reflect)]
 pub struct LRACLR {
     pub id1: i32,
     pub id2: i32,
@@ -102,6 +103,18 @@ pub struct LRACLR {
     pub clr: f64,
     pub pipe_radius: f64,
 }
+impl Default for LRACLR {
+    fn default() -> Self {
+        Self { id1:0, id2:0, l:0.0, r:0.0, a:0.0, clr:0.0, pipe_radius:0.0 }
+    }
+}
+
+impl Display for LRACLR {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "L {} R {} A {} CLR {}", self.l, self.r, self.a, self.clr)
+    }
+}
+
 impl LRACLR {
     pub fn default() -> Self {
         Self {
@@ -153,20 +166,15 @@ impl LRACLR {
 
     pub fn rotate_by_id(id:i32,cmnd: &Vec<LRACLR>)->f64{
         let mut ret:f64=0.0;
-       match cmnd.iter().find(|cmd| {cmd.id1==id || cmd.id2==id}) {
-           None => {}
-           Some(v) => {
-               ret=v.r;
-           }
-       };
+        match cmnd.iter().find(|cmd| {cmd.id1==id || cmd.id2==id}) {
+            None => {}
+            Some(v) => {
+                ret=v.r;
+            }
+        };
         ret
     }
 
-}
-impl Display for LRACLR {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "L {} R {} A {} CLR {}", self.l, self.r, self.a, self.clr)
-    }
 }
 
 fn generate_cyl(id: u64, h: f64, radius: f64) -> MainCylinder {
@@ -435,4 +443,163 @@ pub fn all_to_stp(cyls: &Vec<MainCylinder>, tors: &Vec<BendToro>) -> Vec<u8> {
     let _ = ruststep::parser::parse(&step_string).unwrap();
     step_file
 }
+
+
+// ... (предыдущий код файла: импорты, структуры LRACLR, MainCylinder и т.д.)
+
+
+/// Функция расчета состояния трубы в момент времени t (0.0..1.0)
+/// Возвращает: (Точка на centerline, X-axis, Y-axis, Z-axis, Rotation, SegmentID, BendCenter, TotalLen, BendTheta)
+pub fn byt(
+    t: f64,
+    cmnd: &Vec<LRACLR>,
+    up_dir: &Vector3
+) -> (Point3, Vector3, Vector3, Vector3, f64, u64, Option<Point3>, f64, f64, f64) {
+
+    let len: f64 = tot_pipe_len(cmnd);
+    let dist = len * t; // Дистанция от начала трубы
+
+    // Генерируем геометрию (в идеале кэшировать это, но для прототипа сойдет)
+    let (circles, tors) = cnc_to_poly(cmnd, up_dir);
+    let indexes = circles.len() + tors.len();
+
+    // Дефолтные значения
+    let mut x_dir = Vector3::new(1.0, 0.0, 0.0);
+    let mut y_dir = Vector3::new(0.0, 1.0, 0.0);
+    let mut z_dir = Vector3::new(0.0, 0.0, 1.0);
+    let mut pt: Point3 = Point3::new(0.0, 0.0, 0.0);
+    let mut rot_deg = 0.0;
+    let mut cp: Option<Point3> = None;
+    let mut theta: f64 = 0.0;
+
+    let mut fragment_len = 0.0;
+    let mut id: u64 = 0;
+    let mut bend_radius = 0.0;
+
+    // Пробегаем по всем кусочкам (прямая -> гиб -> прямая -> гиб)
+    // Шаг 2, так как cnc_to_poly возвращает массивы, где индексы чередуются логически
+    for i in (0..indexes).step_by(2) {
+
+        // --- 1. ПРЯМОЙ УЧАСТОК (Cylinder) ---
+        if let Some(c) = circles.iter().find(|cil| cil.id == i as u64) {
+            let min = fragment_len;
+            fragment_len += c.h;
+            let max = fragment_len;
+
+            // Если мы сейчас на этой прямой
+            if dist >= min && dist < max {
+                id = c.id;
+                cp = None;
+                rot_deg = LRACLR::rotate_by_id(c.id as i32, cmnd);
+                let offset = dist - min;
+
+                pt = c.ca.loc + c.ca.dir * offset;
+
+                // Ориентация в пространстве
+                let pt2: Point3 = c.ca.loc + c.ca.dir * (offset + 1.0);
+                x_dir = pt2 - pt; // Вектор вперед
+
+                // Пытаемся определить ориентацию по соседям (гибам)
+                if let Some(arc) = tors.iter().find(|tor| tor.id == (i + 1) as u64) {
+                    // Смотрим на следующий гиб
+                    let pt2 = pt + arc.bend_plane_norm.normalize();
+                    z_dir = pt - pt2;
+                    y_dir = z_dir.cross(x_dir);
+                } else if let Some(arc) = tors.iter().find(|tor| tor.id == (i.saturating_sub(1)) as u64) {
+                    // Или на предыдущий
+                    let pt2 = pt + arc.bend_plane_norm.normalize();
+                    z_dir = pt - pt2;
+                    y_dir = z_dir.cross(x_dir);
+                }
+                // Нашли, выходим
+                break;
+            }
+
+            // --- 2. ГИБ (Torus) ---
+            // Проверяем следующий за прямой элемент - это гиб
+            else if let Some(arc) = tors.iter().find(|tor| tor.id == (i + 1) as u64) {
+                bend_radius=arc.bend_radius;
+                let min = fragment_len;
+                // Длина дуги = угол * радиус
+                let arc_len = arc.angle().0 * arc.bend_radius;
+                fragment_len += arc_len;
+                let max = fragment_len;
+
+                // Если мы внутри гиба
+                if dist >= min && dist < max {
+                    id = arc.id;
+                    cp = Some(arc.bend_center_point);
+                    let offset = dist - min;
+
+                    theta = offset / arc.bend_radius;
+
+                    // Математика поворота вектора вокруг оси гиба
+                    let v1: Vector3 = arc.ca.loc - arc.bend_center_point;
+                    let v2: Vector3 = arc.cb.loc - arc.bend_center_point;
+                    let axis = v1.cross(v2).normalize(); // Ось вращения
+
+                    // Формула Родригеса (упрощенная для плоскости)
+                    let v_target = v1 * theta.cos() + axis.cross(v1) * theta.sin();
+
+                    pt = arc.bend_center_point + v_target;
+
+                    // Ориентация
+                    let pt2 = pt + arc.bend_plane_norm.normalize();
+                    let v3 = (pt - arc.bend_center_point).normalize();
+                    z_dir = pt - pt2;
+                    y_dir = v3;
+                    x_dir = y_dir.cross(z_dir);
+                    break;
+                }
+            }
+        }
+    }
+
+    (pt, x_dir, y_dir, z_dir, rot_deg, id, cp, len, theta,bend_radius)
+}
+
+
+
+pub fn delete_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
+    let mut v: Vec<LRACLR> = vec![];
+    let mut counter = 0;
+    lraclr.iter().for_each(|lra| {
+        if (counter != row_index) {
+            v.push(lra.clone());
+        }
+        counter = counter + 1;
+    });
+    counter = 0;
+    v.iter_mut().for_each(|lra| {
+        lra.id1 = counter;
+        counter = counter + 1;
+        lra.id2 = counter;
+        counter = counter + 1;
+    });
+    v
+}
+pub fn add_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
+    let mut v: Vec<LRACLR> = vec![];
+    let mut counter = 0;
+    lraclr.iter().for_each(|lra| {
+        if (counter != row_index) {
+            v.push(lra.clone());
+        } else {
+            v.push(lra.clone());
+            v.push(lra.clone());
+        }
+        counter = counter + 1;
+    });
+    counter = 0;
+    v.iter_mut().for_each(|lra| {
+        lra.id1 = counter;
+        counter = counter + 1;
+        lra.id2 = counter;
+        counter = counter + 1;
+    });
+    v
+}
+
+
+
 
