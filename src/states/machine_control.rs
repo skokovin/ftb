@@ -331,12 +331,8 @@ fn setup_machine_hierarchy(mut commands: Commands,
 
 fn debug_draw_pivot(mut gizmos: Gizmos, query: Query<(&GlobalTransform, &MachinePartKind)>) {
     for (transform, part_type) in query.iter() {
-        // Рисуем оси только для нашего Пивота (MengeneAlt)
-        // Можешь добавить сюда и другие части через оператор ||
-        if let MachinePartKind::MengeneAlt = part_type {
 
-            // Рисует 3 цветные линии прямо в точке детали
-            // Длина осей = 20.0 (подбери под свой масштаб, может нужно 500.0)
+        if let MachinePartKind::MengeneAlt = part_type {
             gizmos.axes(*transform, 1.5);
         }
     }

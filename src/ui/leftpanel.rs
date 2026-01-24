@@ -25,8 +25,8 @@ fn ui_system(
     mut contexts: EguiContexts,
     mut pipe_spec: ResMut<PipeSpecification>,
     mut machine_registers:  ResMut<MachineRegisters>,
-    mut next_state: ResMut<NextState<AppMode>>, // Переключаем режимы
-    current_state: Res<State<AppMode>>, // Узнаем текущий режим
+    mut next_state: ResMut<NextState<AppMode>>, 
+    current_state: Res<State<AppMode>>, 
     curr_robot_state: Res<State<RobotState>>,
     mut next_robot_state: ResMut<NextState<RobotState>>,
 ){

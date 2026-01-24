@@ -49,5 +49,3 @@ image = "0.25.9"
 winit = "0.30.12"
 regex = "1.12.2"
 glam = "0.30.10"
-[target.'cfg(windows)'.build-dependencies]
-winres = "0.1"

@@ -92,16 +92,11 @@ pub fn triangulate_pipe(pt1_: &Point3<f64>, pt2_: &Point3<f64>, cp_: &Option<Poi
         let left1_b = rotation_b * left_b;
         let pt_b1: Point3<f32> =pt2+left1_b*radius;
 
-
-        // --- Треугольник 1 (b0, a1, a0) ---
-
-        // Вычисляем нормаль грани
         let v1 = pt_a1 - pt_b0;
         let v2 = pt_a0 - pt_b0;
         let face_norm1 = v1.cross(v2).normalize();
         let glam_norm1 = vec_from_norm(face_norm1)*-1.0;
 
-        // Вычисляем нормаль грани
         let v1 = pt_b1 - pt_b0;
         let v2 = pt_a1 - pt_b0;
         let face_norm2 = v1.cross(v2).normalize();

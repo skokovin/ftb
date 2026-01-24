@@ -448,11 +448,7 @@ pub fn all_to_stp(cyls: &Vec<MainCylinder>, tors: &Vec<BendToro>) -> Vec<u8> {
 }
 
 
-// ... (предыдущий код файла: импорты, структуры LRACLR, MainCylinder и т.д.)
 
-
-/// Функция расчета состояния трубы в момент времени t (0.0..1.0)
-/// Возвращает: (Точка на centerline, X-axis, Y-axis, Z-axis, Rotation, SegmentID, BendCenter, TotalLen, BendTheta)
 pub fn byt(
     t: f64,
     cmnd: &Vec<LRACLR>,
@@ -460,13 +456,13 @@ pub fn byt(
 ) -> (Point3, Vector3, Vector3, Vector3, f64, u64, Option<Point3>, f64, f64, f64) {
 
     let len: f64 = tot_pipe_len(cmnd);
-    let dist = len * t; // Дистанция от начала трубы
+    let dist = len * t;
 
-    // Генерируем геометрию (в идеале кэшировать это, но для прототипа сойдет)
+
     let (circles, tors) = cnc_to_poly(cmnd, up_dir);
     let indexes = circles.len() + tors.len();
 
-    // Дефолтные значения
+
     let mut x_dir = Vector3::new(1.0, 0.0, 0.0);
     let mut y_dir = Vector3::new(0.0, 1.0, 0.0);
     let mut z_dir = Vector3::new(0.0, 0.0, 1.0);
@@ -479,17 +475,14 @@ pub fn byt(
     let mut id: u64 = 0;
     let mut bend_radius = 0.0;
 
-    // Пробегаем по всем кусочкам (прямая -> гиб -> прямая -> гиб)
-    // Шаг 2, так как cnc_to_poly возвращает массивы, где индексы чередуются логически
     for i in (0..indexes).step_by(2) {
 
-        // --- 1. ПРЯМОЙ УЧАСТОК (Cylinder) ---
         if let Some(c) = circles.iter().find(|cil| cil.id == i as u64) {
             let min = fragment_len;
             fragment_len += c.h;
             let max = fragment_len;
 
-            // Если мы сейчас на этой прямой
+
             if dist >= min && dist < max {
                 id = c.id;
                 cp = None;
@@ -498,37 +491,33 @@ pub fn byt(
 
                 pt = c.ca.loc + c.ca.dir * offset;
 
-                // Ориентация в пространстве
+
                 let pt2: Point3 = c.ca.loc + c.ca.dir * (offset + 1.0);
                 x_dir = pt2 - pt; // Вектор вперед
 
-                // Пытаемся определить ориентацию по соседям (гибам)
+
                 if let Some(arc) = tors.iter().find(|tor| tor.id == (i + 1) as u64) {
-                    // Смотрим на следующий гиб
                     let pt2 = pt + arc.bend_plane_norm.normalize();
                     z_dir = pt - pt2;
                     y_dir = z_dir.cross(x_dir);
                 } else if let Some(arc) = tors.iter().find(|tor| tor.id == (i.saturating_sub(1)) as u64) {
-                    // Или на предыдущий
                     let pt2 = pt + arc.bend_plane_norm.normalize();
                     z_dir = pt - pt2;
                     y_dir = z_dir.cross(x_dir);
                 }
-                // Нашли, выходим
                 break;
             }
 
-            // --- 2. ГИБ (Torus) ---
-            // Проверяем следующий за прямой элемент - это гиб
+
             else if let Some(arc) = tors.iter().find(|tor| tor.id == (i + 1) as u64) {
                 bend_radius=arc.bend_radius;
                 let min = fragment_len;
-                // Длина дуги = угол * радиус
+
                 let arc_len = arc.angle().0 * arc.bend_radius;
                 fragment_len += arc_len;
                 let max = fragment_len;
 
-                // Если мы внутри гиба
+
                 if dist >= min && dist < max {
                     id = arc.id;
                     cp = Some(arc.bend_center_point);
@@ -536,12 +525,11 @@ pub fn byt(
 
                     theta = offset / arc.bend_radius;
 
-                    // Математика поворота вектора вокруг оси гиба
+
                     let v1: Vector3 = arc.ca.loc - arc.bend_center_point;
                     let v2: Vector3 = arc.cb.loc - arc.bend_center_point;
-                    let axis = v1.cross(v2).normalize(); // Ось вращения
+                    let axis = v1.cross(v2).normalize();
 
-                    // Формула Родригеса (упрощенная для плоскости)
                     let v_target = v1 * theta.cos() + axis.cross(v1) * theta.sin();
 
                     pt = arc.bend_center_point + v_target;
