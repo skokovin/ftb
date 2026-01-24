@@ -10,7 +10,10 @@ use rand::{random, Rng};
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 use std::fmt::{Debug, Display, Formatter};
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
 use std::ops::{Mul, Sub};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use bevy::prelude::Reflect;
 use log::warn;
@@ -601,5 +604,31 @@ pub fn add_lra_row(row_index: i32, lraclr: &Vec<LRACLR>) -> Vec<LRACLR> {
 }
 
 
+pub fn save_csv(lraclr_arr: &Vec<LRACLR>, path: &PathBuf) {
+    let mut s_out = String::new();
+    if (!lraclr_arr.is_empty()) {
+        for i in 0..lraclr_arr.len() - 1 {
+            let lraclr = lraclr_arr[i].clone();
+            s_out.push_str(format!("{}{}", i, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.l, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.r, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.a, ";").as_str());
+            s_out.push_str(format!("{}{}", lraclr.clr, ";").as_str());
+            s_out.push_str("0\r\n");
+        }
+        let last = lraclr_arr.last().unwrap().clone();
+        s_out.push_str(format!("{}{}", lraclr_arr.len() - 1, ";").as_str());
+        s_out.push_str(format!("{}{}", last.l, ";").as_str());
+        s_out.push_str("\r\n");
+        //let mut d="C:\\tmp\\".to_string();
+        //let mut d = "".to_string();
+        //d.push_str(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64().to_string().as_str());
+        //d.push_str(".csv");
+
+        let f = OpenOptions::new().create(true).append(true).open(path).expect("Unable to open file");
+        let mut f = BufWriter::new(f);
+        f.write_all(s_out.as_bytes()).expect("Unable to write data");
+    }
+}
 
 

@@ -5,10 +5,10 @@ use bevy_ecs::change_detection::{Res, ResMut};
 use bevy_ecs::prelude::IntoScheduleConfigs;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use rfd::FileDialog;
-use crate::algo::cnc::reverse_lraclr;
+use crate::algo::cnc::{reverse_lraclr, save_csv};
 use crate::states::pipe_control::PipeSpecification;
 use crate::states::scene_control::AppMode;
-use crate::states::state_machine::RobotState;
+use crate::states::state_machine::{MachineRegisters, RobotState};
 use crate::ui::UiOrder;
 
 pub struct TopUiPanelPlugin;
@@ -34,6 +34,7 @@ fn ui_system(
     current_state: Res<State<AppMode>>, // Узнаем текущий режим
     curr_robot_state: Res<State<RobotState>>,
     mut next_robot_state: ResMut<NextState<RobotState>>,
+    mut machine_registers:  ResMut<MachineRegisters>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -50,19 +51,17 @@ fn ui_system(
         } else {
             egui_material_icons::icons::ICON_DESELECT // Closed Eye (See-No-Evil)
         };
-
-
-
         ui.horizontal_wrapped(|ui| {
             if ui.button("File").clicked() {
               if let Some(path) = rfd::FileDialog::new().add_filter("STEP", &["stp", "step"]).pick_file() {
                         match fs::read(path) {
                             Ok(stp) => {
+                                pipe_spec.init_pipe(&stp);
+                                next_state.set(AppMode::Restarting);
                             }
                             Err(_) => {}
                         }
                     }
-
             };
             ui.separator();
             if ui.button("Reverse").clicked() {
@@ -74,8 +73,7 @@ fn ui_system(
             ui.separator();
             if ui.button("CSV").clicked() {
                 if let Some(path) = FileDialog::new().add_filter("CSV", &["csv"]).set_directory("/").save_file() {
-
-                    println!("{:?}", path);
+                    save_csv(& pipe_spec.segments, &path);
                 }
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "ftb"
-version = "20.0.0"
+version = "20.0.1"
 edition = "2024"
 
 [profile.release]
@@ -35,14 +35,14 @@ truck-geotrait = { git = "https://github.com/ricosjp/truck.git", features = ["de
 
 #egui_alignments = "0.3.4"
 egui_material_icons = "0.5.0"
-bevy = "0.17.3"
-bevy_ecs = "0.17.3"
+bevy = "0.18.0"
+bevy_ecs = "0.18.0"
 #bevy_editor_cam = { path = "d:/rustproj2/bevy_editor_cam" }
 #bevy_editor_cam = { git = "https://github.com/aevyrie/bevy_editor_cam.git" }
 
 
 bevy_http_client = "0.9.0"
-bevy_egui = "0.38.1"
+bevy_egui = "0.39.0"
 rfd = "0.17.1"
 chrono = "0.4.42"
 image = "0.25.9"
